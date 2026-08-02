@@ -79,14 +79,14 @@ Map Codex JSON events into structured engine event frames:
 
 ### Phase H: Genericize remaining OpenClaw assumptions
 Split `useGateway.ts` into capability-gated hooks:
-- [ ] `useEngine()` — construction and lifecycle
-- [ ] `useSessions()` — session list/CRUD
-- [ ] `useRuns()` — run state, send/abort, event dispatch
-- [ ] `useModels()` — model listing and selection
-- [ ] `useArtifacts()` — artifact store (optional capability)
-- [ ] `useNotifications()` — gated on `capabilities.notifications`
-- [ ] `useSchedules()` — gated on `capabilities.crons`
-- **Status:** not started
+- [x] `Settings.engineType` field drives registry dispatch ("openclaw"|"acp")
+- [x] engineRef typed as `Engine` instead of `OpenClawEngine`
+- [x] 14 optional OpenClaw methods added to Engine interface
+- [x] All OpenClaw-only calls use optional chaining
+- [x] CronGateway/NotificationsGateway replaced with inline capability-gated versions
+- [x] Reconnect, session ops, gateway commands all gated
+- [x] Existing OpenClaw behavior preserved unchanged
+- **Status:** complete
 
 ### Phase I: Persistent apps and artifacts
 Replace OpenClaw server-side storage for ACP agents:

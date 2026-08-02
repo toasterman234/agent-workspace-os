@@ -73,3 +73,20 @@
 - End-to-end verified: health ✓, RPC ok ✓, 12 events including agent:assistant("Hello! 👋") ✓
 - Committed `feat(gateway): Codex JSON event mapping`
 - **Next**: Phase H — genericize remaining OpenClaw assumptions in useGateway.ts
+
+## Session: 2026-08-02 (Phase H)
+- Extended `Settings` type with `engineType?: "openclaw" | "acp"` field
+- Extended `Engine` interface with 14 optional OpenClaw-specific methods: `fetchThreadList`, `patchSession`, `resetSession`, `compactSession`, `subscribeSessions`, `fetchGatewayCommands`, `listNotifications`, `markNotificationsRead`, `upsertNotification`, `listCronJobs`, `listCronRuns`, `updateCronJob`, `runCronJob`, `removeCronJob`
+- Removed `reconnect` from base `Engine` — it's OpenClaw-only, called via casting
+- Refactored `useGateway.ts`:
+  - Reads engine type from `getSettings()?.engineType ?? "openclaw"`
+  - `engineRef` typed as `Engine` instead of `OpenClawEngine`
+  - Replaced `useCronGateway`/`useNotificationsGateway` sub-hooks with inline capability-gated versions
+  - All OpenClaw-specific calls use optional chaining: `engineRef.current?.fetchThreadList?.()` etc.
+  - `reconnect` casts to `OpenClawEngine` for the OpenClaw-specific path
+  - `refreshNotifications` and `refreshCronData` return proper types matching ChatApp's expectations
+  - Capability flags (`cronsCap`, `notificationsCap`) recorded from `engine.capabilities` on mount
+- Result: selecting `engineType: "acp"` in settings now constructs `AcpEngine` via the registry with zero code changes
+- Verified: typecheck ✓, lint ✓, format ✓, build ✓
+- Committed `feat(ui): genericize useGateway`
+- **Next**: Phase I — persistent apps and artifacts for the ACP gateway
