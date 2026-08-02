@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { ConnectionState } from "@/lib/gateway/types";
 import { validateGatewayUrl } from "@/lib/gateway/url";
 import type { Settings } from "@/lib/storage";
+import type { EngineType } from "@/lib/storage";
 
 interface Props {
   open: boolean;
@@ -92,6 +93,7 @@ const STATUS_BANNER: Record<
 export function SettingsDialog({ open, currentSettings, connectionState, onClose, onSave }: Props) {
   const [gatewayUrl, setGatewayUrl] = useState(currentSettings?.gatewayUrl ?? "");
   const [token, setToken] = useState(currentSettings?.token ?? "");
+  const [engineType, setEngineType] = useState<EngineType>(currentSettings?.engineType ?? "openclaw");
   // `pending` = user clicked Save & Connect and we're awaiting the engine's
   // resolution. We hold the dialog open and watch `connectionState` to decide
   // whether to close (CONNECTED) or surface an inline error (UNREACHABLE /
@@ -124,6 +126,7 @@ export function SettingsDialog({ open, currentSettings, connectionState, onClose
     if (!open) return;
     setGatewayUrl(currentSettings?.gatewayUrl ?? "");
     setToken(currentSettings?.token ?? "");
+    setEngineType(currentSettings?.engineType ?? "openclaw");
     setPending(false);
     submitSnapshotRef.current = null;
     hasLeftSnapshotRef.current = false;
@@ -189,6 +192,7 @@ export function SettingsDialog({ open, currentSettings, connectionState, onClose
       gatewayUrl: trimmedUrl,
       token: trimmedToken,
       deviceToken: credsChanged ? undefined : currentSettings?.deviceToken,
+      engineType,
     };
     setError(null);
     setPending(true);
@@ -299,6 +303,25 @@ export function SettingsDialog({ open, currentSettings, connectionState, onClose
                     openclaw onboard
                   </code>{" "}
                   to set a new one. Stored locally — only needed once per device.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-xs">
+                <label className="font-label text-sm font-medium text-text-neutral-secondary">
+                  Engine Type
+                </label>
+                <select
+                  value={engineType}
+                  onChange={(e) => setEngineType(e.target.value as EngineType)}
+                  disabled={pending}
+                  className="rounded-lg border border-border-default bg-background px-m py-s font-body text-md text-text-neutral-primary outline-none focus:border-border-interactive-emphasis disabled:opacity-60 dark:border-border-default/16 dark:bg-foreground"
+                >
+                  <option value="openclaw">OpenClaw Gateway</option>
+                  <option value="acp">ACP Gateway (coding agents)</option>
+                </select>
+                <p className="font-body text-sm text-text-neutral-tertiary">
+                  OpenClaw connects to an OpenClaw gateway. ACP connects to the
+                  standalone agent workspace gateway for CLI coding agents.
                 </p>
               </div>
 
