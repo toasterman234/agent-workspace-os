@@ -52,6 +52,47 @@ export class RpcDispatcher {
           return { type: "res", id, ok: killed };
         }
 
+        case "chat.history": {
+          const sessionId = params?.sessionId as string;
+          if (!sessionId)
+            return { type: "res", id, ok: false, error: "sessionId required" };
+          const runs = this.db.listRuns(sessionId);
+          const messages: Array<Record<string, unknown>> = [];
+          for (const run of runs) {
+            if (run.prompt) {
+              messages.push({ id: run.id, role: "user", content: run.prompt });
+            }
+            if (run.status === "completed") {
+              messages.push({
+                id: `assistant-${run.id}`,
+                role: "assistant",
+                content: `[Run ${run.id} completed]`,
+              });
+            } else if (run.status === "error") {
+              messages.push({
+                id: `assistant-${run.id}`,
+                role: "assistant",
+                content: `[Error: ${run.error ?? "unknown"}]`,
+              });
+            }
+          }
+          return { type: "res", id, ok: true, payload: { messages } };
+        }
+
+        case "models.list": {
+          return {
+            type: "res",
+            id,
+            ok: true,
+            payload: {
+              models: [
+                { id: "codex-default", name: "Codex", provider: "openai" },
+                { id: "claude-default", name: "Claude", provider: "anthropic" },
+              ],
+            },
+          };
+        }
+
         default:
           return { type: "res", id, ok: false, error: `unknown method: ${method}` };
       }
@@ -164,11 +205,7 @@ export class RpcDispatcher {
 
     // Spawn the process (or get the already-running one)
     try {
-      const proc = this.pm.spawn(agentId);
-      // Write the prompt to stdin if the process is new and we have a message
-      if (message && proc.stdin && proc.exitCode === null) {
-        proc.stdin.write(message + "\n");
-      }
+      const proc = this.pm.spawn(agentId, undefined, message);
     } catch (err) {
       this.pm.off("process", onProcessEvent);
       this.db.updateRun(run.id, {

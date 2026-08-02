@@ -6,6 +6,7 @@
  * returns an Engine. The registry dispatches on config.type (defaults to
  * "openclaw").
  */
+import { createAcpEngine } from "./acp/AcpEngine";
 import { OpenClawEngine } from "./openclaw/OpenClawEngine";
 import { registerEngine } from "./registry";
 import type { Engine, OpenClawEngineConfig } from "./types";
@@ -24,4 +25,8 @@ registerEngine("openclaw", (config, events): Engine => {
     },
     events as unknown as ConstructorParameters<typeof OpenClawEngine>[1],
   );
+});
+
+registerEngine("acp", (config): Engine => {
+  return createAcpEngine(config);
 });

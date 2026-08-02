@@ -32,8 +32,10 @@ export class ProcessManager extends EventEmitter {
     for (const c of configs) this.register(c);
   }
 
-  /** Spawn a registered agent. Emits process events. */
-  spawn(agentId: string, cwd?: string): ChildProcess {
+  /** Spawn a registered agent. Emits process events.
+   *  If prompt is provided, it's appended as an extra argument
+   *  (works for `codex exec <prompt>` and similar CLI tools). */
+  spawn(agentId: string, cwd?: string, prompt?: string): ChildProcess {
     const config = this.agentConfigs.get(agentId);
     if (!config) throw new Error(`Agent not registered: ${agentId}`);
     if (!config.enabled && config.enabled !== undefined)
@@ -44,7 +46,8 @@ export class ProcessManager extends EventEmitter {
       return existing; // already running
     }
 
-    const args = config.args ?? [];
+    const args = [...(config.args ?? [])];
+    if (prompt) args.push(prompt);
     const env = { ...process.env, ...config.env };
     const workDir = cwd ?? config.cwd ?? process.cwd();
 
