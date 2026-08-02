@@ -1,22 +1,22 @@
 "use client";
 
 import { separateContentAndContext } from "@/lib/content-parser";
-import {
-  OpenClawEngine,
-  resolveChatSessionKey,
-  type CompactSessionResult,
-} from "@/lib/engines/openclaw/OpenClawEngine";
+import type { CompactSessionResult } from "@/lib/engines/openclaw/OpenClawEngine";
+import { OpenClawEngine, resolveChatSessionKey } from "@/lib/engines/openclaw/OpenClawEngine";
 import { buildEngine } from "@/lib/engines/registry";
 // Side-effect: registers engine factories with the registry
+import type { CronJobRecord, CronRunEntry, CronStatusRecord } from "@/lib/cron";
 import "@/lib/engines/index";
 import type {
   AppStore,
   ArtifactStore,
+  Engine,
   GatewayCommand,
   StoredMessage,
   UploadStore,
 } from "@/lib/engines/types";
 import { ConnectionState } from "@/lib/gateway/types";
+import type { NotificationRecord } from "@/lib/notifications";
 import type { Settings } from "@/lib/storage";
 import { getSettings, saveSettings } from "@/lib/storage";
 import { deriveTitleFromText, isOpaqueSessionTitle } from "@/lib/thread-titles";
@@ -24,8 +24,6 @@ import type { ClawThreadListItem, ModelChoice, SessionRow } from "@/types/gatewa
 import { EventType } from "@openuidev/react-headless";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { sessionRouteIdFromSessionKey } from "./session-routing";
-import { useCronGateway } from "./useCronGateway";
-import { useNotificationsGateway } from "./useNotificationsGateway";
 
 export type { ClawThreadListItem, ModelChoice, SessionRow } from "@/types/gateway-responses";
 export { resolveChatSessionKey, sessionRouteIdFromSessionKey };
@@ -92,7 +90,7 @@ export function useGateway({ onAuthFailed }: { onAuthFailed: () => void }) {
 
   const knownAgentIds = useRef<Set<string>>(new Set());
   const attemptedAutoTitlesRef = useRef<Map<string, string>>(new Map());
-  const engineRef = useRef<OpenClawEngine | null>(null);
+  const engineRef = useRef<Engine | null>(null);
   const sessionMetaRef = useRef(sessionMeta);
   // Subscribers for `sessions.changed` broadcasts — populated by consumers
   // via `onSessionChanged(...)` and drained when the gateway fires an event.
@@ -104,31 +102,87 @@ export function useGateway({ onAuthFailed }: { onAuthFailed: () => void }) {
   const cronRefreshFnRef = useRef<(() => Promise<unknown>) | null>(null);
   const cronRefreshTimerRef = useRef<number | null>(null);
 
-  // Notifications + cron live in their own sub-hooks. Cron depends on
-  // notifications so that cron-run upserts can patch the cached list without
-  // a redundant `listNotifications` round-trip.
-  const {
-    notifications,
-    setNotifications,
-    refreshNotifications,
-    markNotificationsRead,
-    upsertNotification,
-  } = useNotificationsGateway(engineRef);
+  // ── Capability-gated notification state (OpenClaw only) ───────────────
+  const [notifications, setNotifications] = useState<NotificationRecord[]>([]);
+  const notificationsCap = useRef(false);
 
-  const {
-    cronJobs,
-    cronRuns,
-    cronStatus,
-    refreshCronData,
-    updateCronJob,
-    runCronJob,
-    removeCronJob,
-  } = useCronGateway(
-    engineRef,
-    knownAgentIds,
-    connectionState,
-    refreshNotifications,
-    setNotifications,
+  const refreshNotifications = useCallback(async (): Promise<NotificationRecord[]> => {
+    if (!notificationsCap.current) return [];
+    try {
+      const result = (await engineRef.current?.listNotifications?.()) as
+        | NotificationRecord[]
+        | undefined;
+      const list = result ?? [];
+      setNotifications(list);
+      return list;
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const markNotificationsRead = useCallback(async (ids?: string[]) => {
+    if (!notificationsCap.current) return false;
+    try {
+      return (await engineRef.current?.markNotificationsRead?.(ids)) ?? false;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const upsertNotification = useCallback(async (n: Record<string, unknown>) => {
+    if (!notificationsCap.current) return false;
+    try {
+      return (
+        (await engineRef.current?.upsertNotification?.(n as unknown as Record<string, unknown>)) ??
+        false
+      );
+    } catch {
+      return false;
+    }
+  }, []);
+
+  // ── Capability-gated cron state (OpenClaw only) ────────────────────────
+  const [cronJobs, setCronJobs] = useState<CronJobRecord[]>([]);
+  const [cronRuns, setCronRuns] = useState<CronRunEntry[]>([]);
+  const [cronStatus, setCronStatus] = useState<CronStatusRecord | null>(null);
+  const cronsCap = useRef(false);
+
+  const refreshCronData = useCallback(async () => {
+    if (!cronsCap.current)
+      return { jobs: [] as CronJobRecord[], runs: [] as CronRunEntry[], status: null };
+    try {
+      const oc = engineRef.current as unknown as OpenClawEngine | null;
+      const [jobs, runs, status] = await Promise.all([
+        oc?.listCronJobs().then((j) => j),
+        oc?.listCronRuns().then((r) => r),
+        oc?.getCronStatus().then((s) => s),
+      ]);
+      const j = (jobs ?? []) as CronJobRecord[];
+      const r = (runs ?? []) as CronRunEntry[];
+      const s = (status ?? null) as CronStatusRecord | null;
+      setCronJobs(j);
+      setCronRuns(r);
+      setCronStatus(s);
+      return { jobs: j, runs: r, status: s };
+    } catch {
+      return { jobs: [] as CronJobRecord[], runs: [] as CronRunEntry[], status: null };
+    }
+  }, []);
+
+  const updateCronJob = useCallback(
+    async (id: string, patch: Record<string, unknown>) =>
+      engineRef.current?.updateCronJob?.(id, patch) ?? false,
+    [],
+  );
+
+  const runCronJob = useCallback(
+    async (id: string, mode?: string) => engineRef.current?.runCronJob?.(id, mode) ?? false,
+    [],
+  );
+
+  const removeCronJob = useCallback(
+    async (id: string) => engineRef.current?.removeCronJob?.(id) ?? false,
+    [],
   );
 
   // Keep the engine-side cron callback pointing at the latest closure.
@@ -142,12 +196,13 @@ export function useGateway({ onAuthFailed }: { onAuthFailed: () => void }) {
 
   useEffect(() => {
     const s = getSettings();
+    const engineType: string = s?.engineType ?? "openclaw";
     const engine = buildEngine(
       {
         id: "default",
         name: "Default",
         enabled: true,
-        type: "openclaw",
+        type: engineType,
         gatewayUrl: s?.gatewayUrl ?? "",
         token: s?.token,
         deviceToken: s?.deviceToken,
@@ -187,9 +242,6 @@ export function useGateway({ onAuthFailed }: { onAuthFailed: () => void }) {
             }
           }
         },
-        // Coalesce bursts: cron events can arrive in pairs (started → completed
-        // within milliseconds). A short trailing debounce keeps refetch traffic
-        // sane while still feeling instant in the UI.
         onCronChanged: () => {
           if (cronRefreshTimerRef.current !== null) return;
           cronRefreshTimerRef.current = window.setTimeout(() => {
@@ -200,8 +252,12 @@ export function useGateway({ onAuthFailed }: { onAuthFailed: () => void }) {
           }, 150);
         },
       },
-    ) as OpenClawEngine; // registry dispatch: type="openclaw" → OpenClawEngine
+    );
     engineRef.current = engine;
+    // Record capability flags for gate checks
+    const caps = engine.capabilities;
+    cronsCap.current = !!caps.crons;
+    notificationsCap.current = !!caps.notifications;
     setArtifacts(engine.artifacts);
     setApps(engine.apps);
     setUploads(engine.uploads);
@@ -213,7 +269,7 @@ export function useGateway({ onAuthFailed }: { onAuthFailed: () => void }) {
   }, []);
 
   const reconnect = useCallback((newSettings: Settings) => {
-    engineRef.current?.reconnect(newSettings);
+    (engineRef.current as OpenClawEngine | undefined)?.reconnect?.(newSettings);
   }, []);
 
   // User-initiated abort. Tells the gateway to stop the in-flight run on
@@ -263,7 +319,7 @@ export function useGateway({ onAuthFailed }: { onAuthFailed: () => void }) {
             // retry isn't permanently blocked.
             attemptedAutoTitlesRef.current.set(sessionKey, derivedTitle);
             engineRef.current
-              .patchSession(sessionKey, { label: derivedTitle })
+              ?.patchSession?.(sessionKey, { label: derivedTitle })
               .then((ok) => {
                 if (!ok) {
                   attemptedAutoTitlesRef.current.delete(sessionKey);
@@ -286,10 +342,10 @@ export function useGateway({ onAuthFailed }: { onAuthFailed: () => void }) {
     [],
   );
 
-  const fetchThreadList = useCallback(
-    async (): Promise<ClawThreadListItem[]> => engineRef.current?.fetchThreadList() ?? [],
-    [],
-  );
+  const fetchThreadList = useCallback(async (): Promise<ClawThreadListItem[]> => {
+    const result = await engineRef.current?.fetchThreadList?.();
+    return (result as ClawThreadListItem[] | undefined) ?? [];
+  }, []);
 
   const loadThread = useCallback(
     async (threadId: string): Promise<StoredMessage[]> =>
@@ -331,25 +387,26 @@ export function useGateway({ onAuthFailed }: { onAuthFailed: () => void }) {
 
   const resetSession = useCallback(
     async (sessionKey: string): Promise<boolean> =>
-      engineRef.current?.resetSession(sessionKey) ?? false,
+      (await engineRef.current?.resetSession?.(sessionKey)) ?? false,
     [],
   );
 
-  const compactSession = useCallback(
-    async (sessionKey: string): Promise<CompactSessionResult> =>
-      engineRef.current?.compactSession(sessionKey) ?? {
+  const compactSession = useCallback(async (sessionKey: string): Promise<CompactSessionResult> => {
+    const result = await engineRef.current?.compactSession?.(sessionKey);
+    return (
+      (result as CompactSessionResult) ?? {
         ok: false,
         compacted: false,
         tokensBefore: null,
         tokensAfter: null,
         reason: null,
-      },
-    [],
-  );
+      }
+    );
+  }, []);
 
   const patchSession = useCallback(
     async (sessionKey: string, patch: Record<string, unknown>): Promise<boolean> =>
-      engineRef.current?.patchSession(sessionKey, patch) ?? false,
+      (await engineRef.current?.patchSession?.(sessionKey, patch)) ?? false,
     [],
   );
 
@@ -364,12 +421,12 @@ export function useGateway({ onAuthFailed }: { onAuthFailed: () => void }) {
     }
     let cancelled = false;
     void engineRef.current
-      ?.fetchGatewayCommands()
+      ?.fetchGatewayCommands?.()
       .then((commands) => {
-        if (!cancelled) setGatewayCommands(commands);
+        if (!cancelled) setGatewayCommands(commands as GatewayCommand[]);
       })
       .catch((err) => console.warn("[claw] fetchGatewayCommands failed:", err));
-    void engineRef.current?.subscribeSessions();
+    void engineRef.current?.subscribeSessions?.();
     return () => {
       cancelled = true;
     };

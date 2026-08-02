@@ -1,7 +1,11 @@
+export type EngineType = "openclaw" | "acp";
+
 export interface Settings {
   gatewayUrl: string;
   token?: string;
   deviceToken?: string;
+  /** Which engine to construct. Defaults to "openclaw". */
+  engineType?: EngineType;
 }
 
 const STORAGE_KEY = "claw-settings-v1";

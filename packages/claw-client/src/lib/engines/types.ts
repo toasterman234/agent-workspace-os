@@ -245,6 +245,22 @@ export interface Engine {
     abortController: AbortController,
   ): Promise<Response>;
   abort(sessionId: string): Promise<void>;
+
+  // Optional: OpenClaw-specific methods. Callers must gate on capabilities.
+  fetchThreadList?(): Promise<unknown[]>;
+  patchSession?(sessionKey: string, patch: Record<string, unknown>): Promise<boolean>;
+  resetSession?(sessionKey: string): Promise<boolean>;
+  compactSession?(sessionKey: string): Promise<unknown>;
+  subscribeSessions?(): Promise<void>;
+  fetchGatewayCommands?(agentId?: string): Promise<unknown[]>;
+  listNotifications?(): Promise<unknown[]>;
+  markNotificationsRead?(ids?: string[]): Promise<boolean>;
+  upsertNotification?(notification: Record<string, unknown>): Promise<boolean>;
+  listCronJobs?(): Promise<unknown[]>;
+  listCronRuns?(): Promise<unknown[]>;
+  updateCronJob?(id: string, patch: Record<string, unknown>): Promise<boolean>;
+  runCronJob?(id: string, mode?: string): Promise<boolean>;
+  removeCronJob?(id: string): Promise<boolean>;
 }
 
 // ── Engine events (base) ────────────────────────────────────────────────────
