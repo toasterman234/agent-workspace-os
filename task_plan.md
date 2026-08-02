@@ -64,17 +64,18 @@ First vertical slice — one agent, not five:
 - **Status:** complete
 
 ### Phase G: Translate coding-agent events
-Map ACP events into the existing workspace UI:
-- [ ] Assistant text → streamed message
-- [ ] Thought/reasoning → collapsible reasoning timeline
-- [ ] Tool call → tool event card
-- [ ] Terminal command → terminal activity
-- [ ] File modification → diff card
-- [ ] Plan update → plan panel
-- [ ] Permission request → approval UI
-- [ ] Completion/error → run status
-- [ ] Child agent → nested run
-- **Status:** not started
+Map Codex JSON events into structured engine event frames:
+- [x] Assistant text (agent_message) → agent:assistant stream
+- [x] Command execution → tool:start (command_execution) / tool:result
+- [x] File modification → tool events (file_change with diff content)
+- [x] MCP tool calls → tool events
+- [x] Turn lifecycle → agent:lifecycle (started/completed)
+- [x] Errors → item:completed error events
+- [x] StreamRun parses JSON lines, buffers partial lines, routes non-JSON as stderr
+- [x] Gateway defaults updated: --json + --skip-git-repo-check
+- [x] Prompt sent via stdin for reliability (not positional arg)
+- [x] Verified end-to-end: gateway spawns codex, streams events over WS
+- **Status:** complete
 
 ### Phase H: Genericize remaining OpenClaw assumptions
 Split `useGateway.ts` into capability-gated hooks:

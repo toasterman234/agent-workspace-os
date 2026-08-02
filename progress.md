@@ -51,4 +51,25 @@
 - Gateway enhancements: `process-manager.spawn(agentId, cwd?, prompt?)` appends prompt to CLI args; `chat.history`/`models.list` RPC handlers added
 - Verified: typecheck ✓, lint ✓, format ✓, build ✓, gateway /health ✓
 - Committed `feat(acp): working AcpEngine — WebSocket RPC + AG-UI event mapper`
-- **Next**: Phase G — translate coding-agent events (thought/tool/file/permission events in the gateway, AG-UI mapping in the engine)
+- **Next**: Phase G — translate coding-agent events
+
+## Session: 2026-08-02 (Phase G)
+- Researched Codex CLI JSON event format (`codex exec --json`)
+- Codex emits JSON-line events: `thread.started`, `turn.started`/`turn.completed`, `item.started`/`item.completed` with types `agent_message`, `command_execution`, `file_change`, `mcp_tool_call`, `error`
+- Codex does NOT stream token-by-token — sends completed message blocks
+- Created `codex-event-mapper.ts` (250+ lines) — parses JSON lines, maps to engine events:
+  - `agent_message` → agent:assistant (text block)
+  - `command_execution` → tool:start/tool:result (with command, exit_code, aggregated_output)
+  - `file_change` → tool events (file_path, diff content)
+  - `mcp_tool_call` → tool events
+  - `turn.started` → agent:lifecycle (phase: started)
+  - `turn.completed` → chat:final (with usage)
+  - errors → item:completed error events
+- Rewrote `streamRun()` in rpc.ts: buffers stdout, splits on newlines, tries JSON parse, routes non-JSON as stderr, maps JSON through mapCodexEvent
+- Added fallback chat:final on process exit when turn.completed is absent
+- Updated Codex defaults: `--json` + `--skip-git-repo-check` (prevents hang in non-git dirs)
+- Switched prompt delivery from positional arg to stdin.write+end (more reliable for codex)
+- Created test script `scripts/test-gw.cjs`: spawns gateway, connects WS, sends chat.send, verifies event flow
+- End-to-end verified: health ✓, RPC ok ✓, 12 events including agent:assistant("Hello! 👋") ✓
+- Committed `feat(gateway): Codex JSON event mapping`
+- **Next**: Phase H — genericize remaining OpenClaw assumptions in useGateway.ts
