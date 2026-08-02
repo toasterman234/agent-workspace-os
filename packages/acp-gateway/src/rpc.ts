@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { WebSocket } from "ws";
+import { mapCodexEvent } from "./codex-event-mapper.js";
 import type { GatewayDB } from "./db.js";
 import type { ProcessManager } from "./process-manager.js";
 import type { EventFrame, RequestFrame, ResponseFrame, RunRecord, SessionRecord } from "./protocol.js";
@@ -149,8 +150,13 @@ export class RpcDispatcher {
     return response;
   }
 
-  /** Spawn the agent process and relay stdout → event frames to the browser. */
-  private streamRun(agentId: string, run: RunRecord, message: string | undefined, ws: WebSocket): void {
+  /** Spawn the agent process and relay JSON-line events to the browser. */
+  private streamRun(
+    agentId: string,
+    run: RunRecord,
+    message: string | undefined,
+    ws: WebSocket,
+  ): void {
     let buffered = "";
 
     const send = (event: string, payload: unknown) => {
@@ -159,17 +165,38 @@ export class RpcDispatcher {
       ws.send(JSON.stringify(frame));
     };
 
-    const onProcessEvent = (ev: { agentId: string; type: string; data: string; code?: number | null }) => {
+    const onProcessEvent = (ev: {
+      agentId: string;
+      type: string;
+      data: string;
+      code?: number | null;
+    }) => {
       if (ev.agentId !== agentId) return;
 
       if (ev.type === "stdout") {
         buffered += ev.data;
-        // Send incremental text as agent events (assistant stream)
-        send("agent", {
-          stream: "assistant",
-          runId: run.id,
-          data: { delta: ev.data },
-        });
+        // Try to parse JSON lines from the buffer
+        const lines = buffered.split("\n");
+        // Keep the last (potentially incomplete) line in buffer
+        buffered = lines.pop() ?? "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          if (!trimmed.startsWith("{")) {
+            // Non-JSON log line (e.g. rmcp errors) — send as stderr
+            send("agent", {
+              stream: "stderr",
+              runId: run.id,
+              data: { delta: trimmed },
+            });
+            continue;
+          }
+          // Parse and map Codex JSON events
+          const events = mapCodexEvent(trimmed, run.id);
+          for (const e of events) {
+            send(e.event, e.payload);
+          }
+        }
       } else if (ev.type === "stderr") {
         send("agent", {
           stream: "stderr",
@@ -183,12 +210,16 @@ export class RpcDispatcher {
           status: ok ? "completed" : "error",
           error: ok ? undefined : `exit code ${ev.code}`,
         });
-        send("chat", {
-          runId: run.id,
-          sessionKey: run.sessionId,
-          state: ok ? "final" : "error",
-          stopReason: ok ? "end_turn" : "error",
-        });
+        // If the process exited without emitting turn.completed JSON,
+        // send a final chat event so the client closes the stream.
+        if (!buffered.includes('"turn.completed"')) {
+          send("chat", {
+            runId: run.id,
+            sessionKey: run.sessionId,
+            state: ok ? "final" : "error",
+            stopReason: ok ? "end_turn" : "error",
+          });
+        }
       } else if (ev.type === "error") {
         this.pm.off("process", onProcessEvent);
         this.db.updateRun(run.id, { status: "error", error: ev.data });
@@ -205,7 +236,11 @@ export class RpcDispatcher {
 
     // Spawn the process (or get the already-running one)
     try {
-      const proc = this.pm.spawn(agentId, undefined, message);
+      const proc = this.pm.spawn(agentId);
+      if (message && proc.stdin && proc.exitCode === null) {
+        proc.stdin.write(message + "\n");
+        proc.stdin.end();
+      }
     } catch (err) {
       this.pm.off("process", onProcessEvent);
       this.db.updateRun(run.id, {

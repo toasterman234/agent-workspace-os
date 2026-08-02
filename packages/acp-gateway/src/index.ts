@@ -33,7 +33,7 @@ function loadAgentConfigs(): AgentConfig[] {
       name: "Codex",
       type: "codex",
       command: "codex",
-      args: ["exec", "--dangerously-skip-permissions"],
+      args: ["exec", "--dangerously-bypass-approvals-and-sandbox", "--json", "--skip-git-repo-check"],
       enabled: true,
     },
   ];
