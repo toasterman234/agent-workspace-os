@@ -180,6 +180,8 @@ export class OpenClawEngine implements Engine {
     artifacts: true,
     apps: true,
     uploads: true,
+    crons: true,
+    notifications: true,
   };
 
   private socket: GatewaySocket | null = null;

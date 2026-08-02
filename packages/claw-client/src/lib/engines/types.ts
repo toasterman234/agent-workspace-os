@@ -216,6 +216,10 @@ export interface EngineCapabilities {
   artifacts?: boolean;
   apps?: boolean;
   uploads?: boolean;
+  /** OpenClaw-specific: native cron job management */
+  crons?: boolean;
+  /** OpenClaw-specific: native notification system */
+  notifications?: boolean;
 }
 
 // ── Engine interface ──────────────────────────────────────────────────────────
@@ -243,16 +247,33 @@ export interface Engine {
   abort(sessionId: string): Promise<void>;
 }
 
+// ── Engine events (base) ────────────────────────────────────────────────────
+
+export interface EngineEvents {
+  onConnectionStateChange: (state: unknown) => void;
+}
+
 // ── Engine config ─────────────────────────────────────────────────────────────
 
 export interface EngineConfig {
   id: string;
   name: string;
   enabled: boolean;
+  /** Discriminator for registry dispatch. Defaults to "openclaw". */
+  type?: string;
 }
 
 export interface OpenClawEngineConfig extends EngineConfig {
+  type?: "openclaw";
   gatewayUrl: string;
   token?: string;
   deviceToken?: string;
 }
+
+// ── Engine factory ───────────────────────────────────────────────────────────
+
+/** Creates an Engine from its typed config and event callbacks. */
+export type EngineFactory = (
+  config: Record<string, unknown>,
+  events: Record<string, unknown>,
+) => Engine;

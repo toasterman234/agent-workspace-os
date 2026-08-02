@@ -6,6 +6,9 @@ import {
   resolveChatSessionKey,
   type CompactSessionResult,
 } from "@/lib/engines/openclaw/OpenClawEngine";
+import { buildEngine } from "@/lib/engines/registry";
+// Side-effect: registers engine factories with the registry
+import "@/lib/engines/index";
 import type {
   AppStore,
   ArtifactStore,
@@ -139,11 +142,12 @@ export function useGateway({ onAuthFailed }: { onAuthFailed: () => void }) {
 
   useEffect(() => {
     const s = getSettings();
-    const engine = new OpenClawEngine(
+    const engine = buildEngine(
       {
         id: "default",
         name: "Default",
         enabled: true,
+        type: "openclaw",
         gatewayUrl: s?.gatewayUrl ?? "",
         token: s?.token,
         deviceToken: s?.deviceToken,
@@ -152,21 +156,29 @@ export function useGateway({ onAuthFailed }: { onAuthFailed: () => void }) {
         onConnectionStateChange: setConnectionState,
         onPairingRequired: setPairingDeviceId,
         onAuthFailed: () => onAuthFailedRef.current(),
-        onSettingsChanged: (updated) => {
+        onSettingsChanged: (updated: Settings) => {
           setSettings(updated);
           saveSettings(updated);
         },
         onSessionMetaChanged: setSessionMeta,
         onModelsChanged: setAvailableModels,
-        onModelDefaultsChanged: ({ workspaceDefault, byAgent, defaultAgentId: nextDefault }) => {
+        onModelDefaultsChanged: ({
+          workspaceDefault,
+          byAgent,
+          defaultAgentId: nextDefault,
+        }: {
+          workspaceDefault: string | null;
+          byAgent: Map<string, string>;
+          defaultAgentId: string | null;
+        }) => {
           setGatewayDefaultModelId(workspaceDefault);
           setAgentModelById(new Map(byAgent));
           setDefaultAgentId(nextDefault);
         },
-        onKnownAgentIdsChanged: (ids) => {
+        onKnownAgentIdsChanged: (ids: Set<string>) => {
           knownAgentIds.current = ids;
         },
-        onSessionChanged: (sessionKey) => {
+        onSessionChanged: (sessionKey: string) => {
           for (const listener of sessionChangedListenersRef.current) {
             try {
               listener(sessionKey);
@@ -188,7 +200,7 @@ export function useGateway({ onAuthFailed }: { onAuthFailed: () => void }) {
           }, 150);
         },
       },
-    );
+    ) as OpenClawEngine; // registry dispatch: type="openclaw" → OpenClawEngine
     engineRef.current = engine;
     setArtifacts(engine.artifacts);
     setApps(engine.apps);
