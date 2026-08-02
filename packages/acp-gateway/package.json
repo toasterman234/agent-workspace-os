@@ -1,0 +1,28 @@
+{
+  "name": "@agent-workspace/acp-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone ACP gateway — serves the claw-client workspace and manages CLI coding-agent processes over WebSocket.",
+  "scripts": {
+    "build": "tsc --noEmit && esbuild src/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/index.js --external:ws",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "lint:check": "echo 'no linter'",
+    "format:check": "echo 'no formatter'",
+    "test": "echo 'no tests'",
+    "ci": "pnpm typecheck"
+  },
+  "dependencies": {
+    "sql.js": "^1.12.0",
+    "ws": "^8.18.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.15",
+    "@types/ws": "^8.18.1",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
