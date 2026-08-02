@@ -36,3 +36,19 @@
 - Committed `feat(acp-gateway): standalone ACP gateway server` (11 files, 922 lines)
 - Pushed to origin, updated Central Ops experiment tracker
 - **Next**: Phase F — end-to-end single agent (AcpEngine ↔ gateway ↔ CLI process)
+
+## Session: 2026-08-02 (Phase F)
+- Rewrote `AcpEngine` from no-op skeleton (~70 lines) to working WebSocket engine (~420 lines)
+- Opens browser WebSocket to ACP gateway, implements full `Engine` interface
+- RPC dispatch: typed request/response correlation by message ID with pending map
+- Server-push event subscription: `onEvent("agent" | "chat", handler)` → typed handlers
+- `sendMessage()` extracts text from last user message, sends `chat.send` RPC
+- Streams agent stdout events through existing `createOpenClawAGUIMapper` — same AG-UI mapping as OpenClawEngine
+- Implements full `ConversationStore`: listSessions, getSession, createSession, deleteSession, loadHistory over gateway RPC
+- Pre-bound `engine` closure in constructor so store methods can call `this.rpc()`
+- `createAcpEngine()` factory reads `gatewayUrl` from config (default `http://localhost:18791`)
+- Registered `"acp"` type in `engines/index.ts`
+- Gateway enhancements: `process-manager.spawn(agentId, cwd?, prompt?)` appends prompt to CLI args; `chat.history`/`models.list` RPC handlers added
+- Verified: typecheck ✓, lint ✓, format ✓, build ✓, gateway /health ✓
+- Committed `feat(acp): working AcpEngine — WebSocket RPC + AG-UI event mapper`
+- **Next**: Phase G — translate coding-agent events (thought/tool/file/permission events in the gateway, AG-UI mapping in the engine)

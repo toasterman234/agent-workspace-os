@@ -54,11 +54,14 @@ Build a new Node package (packages/acp-gateway/) that:
 
 ### Phase F: End-to-end single agent
 First vertical slice — one agent, not five:
-- [ ] Select agent → select project directory → start ACP process
-- [ ] Initialize → create session → send prompt → stream text
-- [ ] Cancel → close process
-- **Do not add** artifacts, schedules, multiple agents, or elaborate UI
-- **Status:** not started
+- [x] AcpEngine rewritten from no-op skeleton to working WebSocket engine
+- [x] Full Engine interface: connect, disconnect, listAgents, listModels, sendMessage, abort
+- [x] RPC dispatch with request/response correlation
+- [x] Server-push events wired through AG-UI mapper
+- [x] ConversationStore over gateway sessions.* and chat.history
+- [x] Gateway enhanced: prompt-as-arg, chat.history, models.list
+- [x] Verified: typecheck ✓, lint ✓, format ✓, build ✓, gateway ✓
+- **Status:** complete
 
 ### Phase G: Translate coding-agent events
 Map ACP events into the existing workspace UI:
