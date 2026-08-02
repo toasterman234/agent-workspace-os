@@ -20,4 +20,19 @@
 - Staged, committed (`feat(claw-client): add pluggable engine foundation`), pushed to origin
 - Verified `HEAD == origin/feat/acp-engine-foundation` (commit `3d67116`, no diff)
 - Created `task_plan.md` with Phases A-J, decisions, and completion estimate (~15-20%)
-- **Next**: Phase E — server-side gateway package
+
+## Session: 2026-08-02 (Phase E)
+- Created `packages/acp-gateway/` — new monorepo package independent of OpenClaw
+- `protocol.ts` — frame types (RequestFrame, ResponseFrame, EventFrame), AgentConfig, SessionRecord, RunRecord
+- `db.ts` — SQLite persistence via `sql.js` (WASM, no native compile). Tables: `sessions`, `runs`. WAL journal mode, auto-migration on start
+- `process-manager.ts` — spawn/kill/relay agent subprocesses via `child_process`. Emits typed events (stdout, stderr, exit, error). Supports writeStdin for prompt injection
+- `rpc.ts` — RpcDispatcher handles JSON-RPC methods: `agents.list`, `sessions.*`, `chat.send`, `chat.abort`. Creates sessions on demand, spawns agents, streams stdout as `event:agent` frames
+- `server.ts` — HTTP server with WebSocket upgrade. Serves static files from claw-client build + SPA fallback. /health endpoint. Wildcard MIME types
+- `index.ts` — entrypoint: loads agent configs, initializes DB, starts server. Default configs: Codex agent (`codex exec --dangerously-skip-permissions`). Graceful shutdown on SIGINT/SIGTERM
+- Switched from `better-sqlite3` (native compile failed on Node 26) to `sql.js` (WASM, pure JS)
+- Relaxed tsconfig: `noPropertyAccessFromIndexSignature: false`, `noUncheckedIndexedAccess: false` — standalone server, not the claw-client UI
+- Added `sql.js.d.ts` type declarations for the WASM module
+- Verified: typecheck ✓ (all three packages), gateway starts and answers `curl /health → {"ok":true}`
+- Committed `feat(acp-gateway): standalone ACP gateway server` (11 files, 922 lines)
+- Pushed to origin, updated Central Ops experiment tracker
+- **Next**: Phase F — end-to-end single agent (AcpEngine ↔ gateway ↔ CLI process)

@@ -42,15 +42,15 @@ Transform the OpenClaw OS fork (`agent-workspace-os`) into a standalone coding-a
 - **Status:** complete
 
 ### Phase E: Server-side gateway
-Build a new Node package that:
-- [ ] Runs independently of OpenClaw — a standalone server process
-- [ ] Hosts the static claw-client workspace or exposes a WebSocket endpoint
-- [ ] Starts and stops ACP processes (one per agent)
-- [ ] Tracks runs by workspace, project, agent, and session
-- [ ] Relays structured events to the browser
-- [ ] Persists session mappings in SQLite
-- [ ] Survives browser refreshes
-- **Status:** not started
+Build a new Node package (packages/acp-gateway/) that:
+- [x] Runs independently of OpenClaw — a standalone server process
+- [x] Hosts the static claw-client workspace or exposes a WebSocket endpoint
+- [x] Starts and stops ACP processes (one per agent)
+- [x] Tracks runs by workspace, project, agent, and session
+- [x] Relays structured events to the browser
+- [x] Persists session mappings in SQLite
+- [x] Survives browser refreshes
+- **Status:** complete
 
 ### Phase F: End-to-end single agent
 First vertical slice — one agent, not five:
