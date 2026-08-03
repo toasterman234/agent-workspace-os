@@ -16,6 +16,7 @@ export type NormalizedAgentEvent =
   | { type: "tool.started"; runId: string; toolCallId: string; name: string; input?: unknown }
   | { type: "tool.completed"; runId: string; toolCallId: string; output?: unknown; isError?: boolean }
   | { type: "file.changed"; runId: string; path?: string; diff?: string }
+  | { type: "file.created"; runId: string; path: string; content?: string }
   | { type: "permission.requested"; runId: string; requestId: string; details: unknown }
   | { type: "turn.completed"; runId: string; usage?: unknown }
   | { type: "turn.error"; runId: string; error: string };

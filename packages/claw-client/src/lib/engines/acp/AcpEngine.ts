@@ -3,6 +3,9 @@
 import { createOpenClawAGUIMapper } from "@/lib/chat/openclaw-agui-mapper";
 import type {
   AgentInfo,
+  ArtifactRecord,
+  ArtifactStore,
+  ArtifactSummary,
   ConversationStore,
   Engine,
   EngineCapabilities,
@@ -69,7 +72,7 @@ export class AcpEngine implements Engine {
     deleteSessions: true,
     multiAgent: true,
     sessionConfig: false,
-    artifacts: false,
+    artifacts: true,
     apps: false,
     uploads: false,
     crons: false,
@@ -77,6 +80,7 @@ export class AcpEngine implements Engine {
   };
 
   readonly conversations: ConversationStore;
+  readonly artifacts: ArtifactStore;
 
   private ws: WebSocket | null = null;
   private gatewayUrl: string;
@@ -212,6 +216,46 @@ export class AcpEngine implements Engine {
 
       getSessionConfig: async (): Promise<Record<string, string>> => ({}),
       setSessionConfig: async (): Promise<void> => {},
+    };
+
+    this.artifacts = {
+      listArtifacts: async (kind?: string): Promise<ArtifactSummary[]> => {
+        try {
+          const params: RpcPayload = {};
+          if (kind) params["kind"] = kind;
+          const res = await engine("artifacts.list", params);
+          if (!res.ok) return [];
+          const items = (res.payload?.["artifacts"] as
+            | Array<Record<string, unknown>>
+            | undefined) ?? [];
+          return items.map((a) => ({
+            id: a["id"] as string,
+            kind: a["kind"] as string,
+            title: a["title"] as string,
+            source: a["source"] as ArtifactSummary["source"],
+            createdAt: a["createdAt"] as string,
+            updatedAt: a["updatedAt"] as string,
+          }));
+        } catch {
+          return [];
+        }
+      },
+
+      getArtifact: async (artifactId: string): Promise<ArtifactRecord | null> => {
+        try {
+          const res = await engine("artifacts.get", { id: artifactId });
+          if (!res.ok || !res.payload) return null;
+          const a = res.payload["artifact"] as Record<string, unknown> | null;
+          if (!a) return null;
+          return a as unknown as ArtifactRecord;
+        } catch {
+          return null;
+        }
+      },
+
+      deleteArtifact: async (artifactId: string): Promise<void> => {
+        await engine("artifacts.delete", { id: artifactId });
+      },
     };
   }
 

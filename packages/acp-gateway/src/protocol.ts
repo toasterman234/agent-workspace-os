@@ -96,3 +96,23 @@ export interface RunRecord {
   error?: string;
   response?: string;
 }
+
+// ── Artifact types ────────────────────────────────────────────────────────
+
+export interface ArtifactRecord {
+  id: string;
+  sessionId: string;
+  agentId: string;
+  runId: string;
+  kind: string; // "html" | "markdown" | "code" — inferred from extension
+  title: string;
+  path: string; // absolute path on disk
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ArtifactSummary = Pick<
+  ArtifactRecord,
+  "id" | "sessionId" | "agentId" | "runId" | "kind" | "title" | "path" | "createdAt" | "updatedAt"
+>;

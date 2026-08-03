@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import initSqlJs, { type Database, type SqlJsStatic } from "sql.js";
-import type { RunRecord, SessionRecord } from "./protocol.js";
+import type { ArtifactRecord, ArtifactSummary, RunRecord, SessionRecord } from "./protocol.js";
 
 export class GatewayDB {
   private db!: Database;
@@ -81,6 +81,24 @@ export class GatewayDB {
     if (!hasResponse) {
       this.db.run("ALTER TABLE runs ADD COLUMN response TEXT");
     }
+
+    // Artifacts table — files/HTML/markdown created by agents during turns.
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS artifacts (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id),
+        agent_id TEXT NOT NULL,
+        run_id TEXT NOT NULL REFERENCES runs(id),
+        kind TEXT NOT NULL DEFAULT 'html',
+        title TEXT NOT NULL,
+        path TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `);
+    this.db.run("CREATE INDEX IF NOT EXISTS idx_artifacts_session ON artifacts(session_id)");
+
     this.save();
   }
 
@@ -220,6 +238,95 @@ export class GatewayDB {
     fields.push("ended_at = datetime('now')");
     values.push(id);
     this.db.run(`UPDATE runs SET ${fields.join(", ")} WHERE id = ?`, values);
+    this.save();
+  }
+
+  // ── Artifacts ──────────────────────────────────────────────────────────
+
+  /** Register a file written by an agent tool call as a workspace artifact. */
+  createArtifact(record: {
+    sessionId: string;
+    agentId: string;
+    runId: string;
+    path: string;
+    content: string;
+  }): ArtifactRecord {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    const ext = record.path.split(".").pop()?.toLowerCase() ?? "";
+    const kind =
+      ext === "html" || ext === "htm"
+        ? "html"
+        : ext === "md"
+          ? "markdown"
+          : ext === "json" || ext === "yaml" || ext === "yml"
+            ? "code"
+            : "code";
+    const title = record.path.split("/").pop() ?? record.path;
+    this.db.run(
+      "INSERT INTO artifacts (id, session_id, agent_id, run_id, kind, title, path, content, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+      [id, record.sessionId, record.agentId, record.runId, kind, title, record.path, record.content, now, now],
+    );
+    this.save();
+    return { id, sessionId: record.sessionId, agentId: record.agentId, runId: record.runId, kind, title, path: record.path, content: record.content, createdAt: now, updatedAt: now };
+  }
+
+  listArtifacts(sessionId?: string, kind?: string): ArtifactSummary[] {
+    const clauses: string[] = [];
+    const params: string[] = [];
+    if (sessionId) {
+      clauses.push("session_id = ?");
+      params.push(sessionId);
+    }
+    if (kind) {
+      clauses.push("kind = ?");
+      params.push(kind);
+    }
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const sql = `SELECT id, session_id, agent_id, run_id, kind, title, path, created_at, updated_at FROM artifacts ${where} ORDER BY created_at DESC`;
+    const results = this.db.exec(sql, params);
+    if (results.length === 0) return [];
+    const rows = results[0]!;
+    return rows.values.map((row) => ({
+      id: row[rows.columns.indexOf("id")] as string,
+      sessionId: row[rows.columns.indexOf("session_id")] as string,
+      agentId: row[rows.columns.indexOf("agent_id")] as string,
+      runId: row[rows.columns.indexOf("run_id")] as string,
+      kind: row[rows.columns.indexOf("kind")] as string,
+      title: row[rows.columns.indexOf("title")] as string,
+      path: row[rows.columns.indexOf("path")] as string,
+      createdAt: row[rows.columns.indexOf("created_at")] as string,
+      updatedAt: row[rows.columns.indexOf("updated_at")] as string,
+    }));
+  }
+
+  getArtifact(id: string): ArtifactRecord | null {
+    const stmt = this.db.prepare(
+      "SELECT id, session_id, agent_id, run_id, kind, title, path, content, created_at, updated_at FROM artifacts WHERE id = ?",
+    );
+    stmt.bind([id]);
+    if (!stmt.step()) {
+      stmt.free();
+      return null;
+    }
+    const row = stmt.getAsObject() as Record<string, unknown>;
+    stmt.free();
+    return {
+      id: row["id"] as string,
+      sessionId: row["session_id"] as string,
+      agentId: row["agent_id"] as string,
+      runId: row["run_id"] as string,
+      kind: row["kind"] as string,
+      title: row["title"] as string,
+      path: row["path"] as string,
+      content: row["content"] as string,
+      createdAt: row["created_at"] as string,
+      updatedAt: row["updated_at"] as string,
+    };
+  }
+
+  deleteArtifact(id: string): void {
+    this.db.run("DELETE FROM artifacts WHERE id = ?", [id]);
     this.save();
   }
 }

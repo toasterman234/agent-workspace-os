@@ -152,6 +152,64 @@ export class RpcDispatcher {
           };
         }
 
+        case "artifacts.list": {
+          const sessionId = params?.["sessionId"] as string | undefined;
+          const kind = params?.["kind"] as string | undefined;
+          const summaries = this.db.listArtifacts(sessionId, kind);
+          return {
+            type: "res",
+            id,
+            ok: true,
+            payload: {
+              artifacts: summaries.map((a) => ({
+                id: a.id,
+                kind: a.kind,
+                title: a.title,
+                source: { engineId: "acp", agentId: a.agentId, sessionId: a.sessionId },
+                createdAt: a.createdAt,
+                updatedAt: a.updatedAt,
+              })),
+            },
+          };
+        }
+
+        case "artifacts.get": {
+          const artifactId = params?.["id"] as string;
+          if (!artifactId)
+            return { type: "res", id, ok: false, error: "id required" };
+          const record = this.db.getArtifact(artifactId);
+          return {
+            type: "res",
+            id,
+            ok: true,
+            payload: {
+              artifact: record
+                ? {
+                    id: record.id,
+                    kind: record.kind,
+                    title: record.title,
+                    content: record.content,
+                    source: {
+                      engineId: "acp",
+                      agentId: record.agentId,
+                      sessionId: record.sessionId,
+                    },
+                    createdAt: record.createdAt,
+                    updatedAt: record.updatedAt,
+                  }
+                : null,
+            },
+          };
+        }
+
+        case "artifacts.delete": {
+          const artifactId = params?.["id"] as string;
+          if (!artifactId)
+            return { type: "res", id, ok: false, error: "id required" };
+          this.db.deleteArtifact(artifactId);
+          return { type: "res", id, ok: true };
+        }
+
         default:
           return { type: "res", id, ok: false, error: `unknown method: ${method}` };
       }

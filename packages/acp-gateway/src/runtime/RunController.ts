@@ -48,6 +48,24 @@ export class RunController {
         }
         return false;
       }
+      case "file.created": {
+        // Register the written file as a workspace artifact so the UI's
+        // Artifacts panel can display it without requiring OpenClaw plugin tools.
+        if (ev.path && ev.content) {
+          // We need the sessionId and agentId — they live on the run record.
+          const run = this.db.getRun(ev.runId);
+          if (run) {
+            this.db.createArtifact({
+              sessionId: run.sessionId,
+              agentId: run.agentId,
+              runId: ev.runId,
+              path: ev.path,
+              content: ev.content,
+            });
+          }
+        }
+        return false;
+      }
       case "turn.completed": {
         return this.complete(ev.runId);
       }

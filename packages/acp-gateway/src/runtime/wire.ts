@@ -62,6 +62,19 @@ export function normalizedToWire(
         }),
       ];
 
+    case "file.created": {
+      const frames: EventFrame[] = [
+        agent("tool", {
+          phase: "result",
+          name: "file_created",
+          result: { path: ev.path },
+        }),
+      ];
+      // Fire a lifecycle event so the UI knows to re-fetch artifacts.
+      frames.push(agent("lifecycle", { phase: "artifact_created", path: ev.path }));
+      return frames;
+    }
+
     case "permission.requested":
       return [
         agent("lifecycle", {

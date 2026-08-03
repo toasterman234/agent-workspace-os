@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { readFileSync } from "node:fs";
 import type { AgentConfig } from "../../protocol.js";
 import type {
   AdapterCapabilities,
@@ -83,6 +84,9 @@ export class DCodeAcpAdapter implements AgentAdapter {
   private activeRunBySession = new Map<string, string>();
   /** Reverse: runId -> ACP sessionId, for abort(). */
   private sessionByRun = new Map<string, string>();
+  /** Track tool metadata (name, input) from tool_call so file.created can be
+   *  emitted when tool_call_update marks it completed. */
+  private toolMeta = new Map<string, { name: string; rawInput?: unknown }>();
 
   constructor(config: AgentConfig) {
     this.config = config;
@@ -264,24 +268,57 @@ export class DCodeAcpAdapter implements AgentAdapter {
         break;
       }
       case "tool_call": {
+        const toolId = update.toolCallId ?? "";
+        const toolName = update.title ?? update.kind ?? "tool";
+        this.toolMeta.set(toolId, { name: toolName, rawInput: update.rawInput });
         this.emit({
           type: "tool.started",
           runId,
-          toolCallId: update.toolCallId ?? "",
-          name: update.title ?? update.kind ?? "tool",
+          toolCallId: toolId,
+          name: toolName,
           input: update.rawInput,
         });
         break;
       }
       case "tool_call_update": {
         if (update.status === "completed" || update.status === "failed") {
+          const toolId = update.toolCallId ?? "";
+          const meta = this.toolMeta.get(toolId);
+
+          if (
+            meta &&
+            (meta.name === "write_file" || meta.name === "write") &&
+            update.status === "completed"
+          ) {
+            const rawInput = meta.rawInput as
+              | { file_path?: string; path?: string; content?: string }
+              | undefined;
+            const filePath = rawInput?.file_path ?? rawInput?.path;
+            if (filePath) {
+              // Read the file content from disk so it's available even after a restart.
+              let content: string | undefined;
+              try {
+                content = readFileSync(filePath, "utf-8");
+              } catch {
+                // file may have been written outside the gateway's visibility.
+              }
+              this.emit({
+                type: "file.created",
+                runId,
+                path: filePath,
+                content,
+              });
+            }
+          }
+
           this.emit({
             type: "tool.completed",
             runId,
-            toolCallId: update.toolCallId ?? "",
+            toolCallId: toolId,
             output: (update as { content?: unknown }).content,
             isError: update.status === "failed",
           });
+          this.toolMeta.delete(toolId);
         }
         break;
       }
