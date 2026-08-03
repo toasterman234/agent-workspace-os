@@ -1,9 +1,14 @@
-import { randomUUID } from "node:crypto";
 import type { WebSocket } from "ws";
 import { mapCodexEvent } from "./codex-event-mapper.js";
 import type { GatewayDB } from "./db.js";
 import type { ProcessManager } from "./process-manager.js";
-import type { EventFrame, RequestFrame, ResponseFrame, RunRecord, SessionRecord } from "./protocol.js";
+import type {
+  EventFrame,
+  RequestFrame,
+  ResponseFrame,
+  RunRecord,
+  SessionRecord,
+} from "./protocol.js";
 
 export class RpcDispatcher {
   constructor(
@@ -55,8 +60,7 @@ export class RpcDispatcher {
 
         case "chat.history": {
           const sessionId = params?.sessionId as string;
-          if (!sessionId)
-            return { type: "res", id, ok: false, error: "sessionId required" };
+          if (!sessionId) return { type: "res", id, ok: false, error: "sessionId required" };
           const runs = this.db.listRuns(sessionId);
           const messages: Array<Record<string, unknown>> = [];
           for (const run of runs) {
@@ -159,6 +163,8 @@ export class RpcDispatcher {
   ): void {
     let buffered = "";
     let responseText = "";
+    let sentFinal = false;
+    let spawnedPid: number | undefined;
 
     const send = (event: string, payload: unknown) => {
       if (ws.readyState !== ws.OPEN) return;
@@ -171,8 +177,10 @@ export class RpcDispatcher {
       type: string;
       data: string;
       code?: number | null;
+      pid?: number;
     }) => {
       if (ev.agentId !== agentId) return;
+      if (spawnedPid !== undefined && ev.pid !== undefined && ev.pid !== spawnedPid) return;
 
       if (ev.type === "stdout") {
         buffered += ev.data;
@@ -202,6 +210,9 @@ export class RpcDispatcher {
                 responseText = data.text;
               }
             }
+            if (e.event === "chat") {
+              sentFinal = true;
+            }
             send(e.event, e.payload);
           }
         }
@@ -221,7 +232,7 @@ export class RpcDispatcher {
         });
         // If the process exited without emitting turn.completed JSON,
         // send a final chat event so the client closes the stream.
-        if (!buffered.includes('"turn.completed"')) {
+        if (!sentFinal) {
           send("chat", {
             runId: run.id,
             sessionKey: run.sessionId,
@@ -246,6 +257,7 @@ export class RpcDispatcher {
     // Spawn the process (or get the already-running one)
     try {
       const proc = this.pm.spawn(agentId);
+      spawnedPid = proc.pid;
       if (message && proc.stdin && proc.exitCode === null) {
         proc.stdin.write(message + "\n");
         proc.stdin.end();

@@ -1,7 +1,7 @@
-import initSqlJs, { type Database, type SqlJsStatic } from "sql.js";
 import { randomUUID } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import initSqlJs, { type Database, type SqlJsStatic } from "sql.js";
 import type { RunRecord, SessionRecord } from "./protocol.js";
 
 export class GatewayDB {
@@ -211,7 +211,6 @@ export class GatewayDB {
     }
     if (fields.length === 0) return;
     fields.push("ended_at = datetime('now')");
-    fields.push("id = ?");
     values.push(id);
     this.db.run(`UPDATE runs SET ${fields.join(", ")} WHERE id = ?`, values);
     this.save();

@@ -7,6 +7,7 @@ export interface ProcessEvent {
   type: "stdout" | "stderr" | "exit" | "error";
   data: string;
   code?: number | null;
+  pid?: number;
 }
 
 /**
@@ -52,25 +53,31 @@ export class ProcessManager extends EventEmitter {
     const workDir = cwd ?? config.cwd ?? process.cwd();
 
     console.log(`[acp:pm] spawning ${config.command} ${args.join(" ")} in ${workDir}`);
-    const proc = spawn(config.command, args, { cwd: workDir, env, stdio: ["pipe", "pipe", "pipe"] });
+    const proc = spawn(config.command, args, {
+      cwd: workDir,
+      env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
 
     this.processes.set(agentId, proc);
 
+    const pid = proc.pid;
+
     proc.stdout?.on("data", (chunk: Buffer) => {
-      this.emit("process", { agentId, type: "stdout", data: chunk.toString() });
+      this.emit("process", { agentId, type: "stdout", data: chunk.toString(), pid });
     });
 
     proc.stderr?.on("data", (chunk: Buffer) => {
-      this.emit("process", { agentId, type: "stderr", data: chunk.toString() });
+      this.emit("process", { agentId, type: "stderr", data: chunk.toString(), pid });
     });
 
     proc.on("error", (err: Error) => {
-      this.emit("process", { agentId, type: "error", data: err.message });
+      this.emit("process", { agentId, type: "error", data: err.message, pid });
       this.processes.delete(agentId);
     });
 
     proc.on("exit", (code: number | null) => {
-      this.emit("process", { agentId, type: "exit", data: `exited with code ${code}`, code });
+      this.emit("process", { agentId, type: "exit", data: `exited with code ${code}`, code, pid });
       this.processes.delete(agentId);
     });
 
