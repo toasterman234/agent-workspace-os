@@ -6,7 +6,7 @@ import type { NormalizedAgentEvent } from "./NormalizedAgentEvent.js";
  * the browser AcpEngine already understands. The browser consumes two event
  * kinds:
  *   - "agent" frames: {stream, runId, seq, ts, data}
- *       streams: "assistant" | "thinking" | "tool" | "lifecycle"
+ *       streams: "assistant" | "thinking" | "tool" | "lifecycle" | "plan"
  *   - "chat"  frames: {runId, sessionKey, state, stopReason?, errorMessage?}
  *
  * Keeping this mapping in one function means adapters emit only normalized
@@ -74,6 +74,9 @@ export function normalizedToWire(
       frames.push(agent("lifecycle", { phase: "artifact_created", path: ev.path }));
       return frames;
     }
+
+    case "plan.updated":
+      return [agent("plan", { entries: ev.entries })];
 
     case "permission.requested":
       return [

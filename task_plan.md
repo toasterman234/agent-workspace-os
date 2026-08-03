@@ -131,6 +131,22 @@ Add a real second agent (DCode) speaking actual Agent Client Protocol, and split
 - [ ] Browser (UI) verification of the DCode thread — no browser-automation tool available this session; verified instead via the same WS protocol the UI drives (see `progress.md`)
 - **Status:** adapter + restructure + config + multi-turn verification complete; browser-level confirmation outstanding
 
+### Phase L: Surface plan/reasoning trace from DCode
+Bridge DCode's ACP session updates that the adapter currently drops (`default: break` in `DCodeAcpAdapter.ts`) through to the browser's existing Work Trace UI (`AssistantMessage.tsx` ThinkingPanel), which already renders reasoning/plan rows but never receives any.
+
+**Empirical check of `deepagents-code` 0.1.51 (`deepagents_acp/server.py`), done before scoping:**
+- [x] `plan` updates (`AgentPlanUpdate`, `session_update: "plan"`) ARE real and already sent today, driven by the `write_todos` tool (`_handle_todo_update`, `_clear_plan`). This is genuinely available now.
+- [x] `agent_thought_chunk` (`AgentThoughtChunk`) is defined in the underlying `acp` SDK schema but is **never constructed or sent anywhere in `deepagents_acp`** — grepped the whole package, zero hits. DCode does not currently emit reasoning/thought events at all, despite the SDK supporting the type. Building a "thinking" bridge today would wire up dead plumbing with nothing on the other end.
+- [ ] `usage_update` — not yet checked; lower priority since token counts already come through some other path (UI already shows input/output token counts).
+
+**Revised plan given that finding:**
+- [ ] Sub-phase L1 (do first, real data available): map `AgentPlanUpdate`/`session_update: "plan"` in `DCodeAcpAdapter.ts` → new `plan.updated` `NormalizedAgentEvent` → wire into a plan/checklist row above the tool timeline in `AssistantMessage.tsx`. No upstream DCode changes needed.
+- [ ] Sub-phase L2 (blocked on upstream): `agent_thought_chunk` → `reasoning.delta` → existing `"thinking"` stream handling in `openclaw-agui-mapper.ts` (already implemented and dormant) → existing `ReasoningDetail` rows in `AssistantMessage.tsx`. Do NOT build this against DCode until deepagents-code actually emits `agent_thought_chunk`, or find/wire an alternate source of reasoning text. Track upstream deepagents-code releases for this addition, or ask upstream if it's planned.
+- [ ] Sub-phase L3: preserve intermediate `tool_call_update` states (not just terminal completed/failed) — tool kind, raw input, incremental output, timestamps — currently mostly discarded until final status.
+- [ ] Sub-phase L4 (bigger, do after L1-L3 prove out): add a `run_events` table to `db.ts`, write path in `RunController.ts` (currently only accumulates `assistantText`), and rewrite `chat.history` reconstruction in `rpc.ts` (currently only replays prompt + final response text) so plan/tool/reasoning traces survive a page reload.
+- [ ] Optional: raw ACP event inspector / debug view for the timeline, gated behind a toggle.
+- **Status:** scoped, not started. L1 is unblocked and lowest-risk; L2 is blocked pending upstream DCode support for `agent_thought_chunk`.
+
 ## Decisions
 | Decision | Rationale |
 |---|---|
