@@ -358,41 +358,47 @@ export class DCodeAcpAdapter implements AgentAdapter {
       }
 
       // Check if this is a write_file/write into the workspace.
-      const options = params?.options ?? [];
-      for (const opt of options) {
-        const toolName = opt.toolCall?.name ?? "";
-        const toolInput = opt.toolCall?.input as
-          | { file_path?: string; path?: string }
-          | undefined;
-        const targetPath = toolInput?.file_path ?? toolInput?.path;
+      // toolCall is a TOP-LEVEL param, NOT nested inside each option.
+      const toolCall = msg.params?.["toolCall"] as
+        | {
+            title?: string;
+            rawInput?: { file_path?: string; path?: string };
+          }
+        | undefined;
+      const title = toolCall?.title ?? "";
+      const targetPath =
+        toolCall?.rawInput?.file_path ?? toolCall?.rawInput?.path;
+      if (
+        (title.startsWith("Write ") || title === "write_file") &&
+        targetPath
+      ) {
+        const workspaceDir =
+          this.config.cwd ??
+          process.env["ACP_AGENT_CWD"] ??
+          process.cwd();
+        // Verify target is within the workspace — simple prefix check.
         if (
-          (toolName === "write_file" || toolName === "write") &&
-          targetPath
+          targetPath.startsWith(workspaceDir + "/") ||
+          targetPath.startsWith(workspaceDir)
         ) {
-          const workspaceDir =
-            this.config.cwd ?? process.env["ACP_AGENT_CWD"] ?? process.cwd();
-          // Verify target is within the workspace — simple prefix check.
-          if (
-            targetPath.startsWith(workspaceDir + "/") ||
-            targetPath.startsWith(workspaceDir)
-          ) {
-            const allow =
-              options.find((o) =>
-                /allow|approve|yes|confirm/i.test(
-                  `${o.optionId ?? ""} ${o.name ?? ""} ${o.kind ?? ""}`,
-                ),
-              ) ?? options[0];
-            if (allow?.optionId) {
-              this.respond(id, {
-                outcome: { outcome: "selected", optionId: allow.optionId },
-              });
-              return;
-            }
+          const options = params?.options ?? [];
+          const allow =
+            options.find((o) =>
+              /allow|approve|yes|confirm/i.test(
+                `${o.optionId ?? ""} ${o.name ?? ""} ${o.kind ?? ""}`,
+              ),
+            ) ?? options[0];
+          if (allow?.optionId) {
+            this.respond(id, {
+              outcome: { outcome: "selected", optionId: allow.optionId },
+            });
+            return;
           }
         }
       }
 
       // Default: reject or cancel.
+      const options = params?.options ?? [];
       const reject = options.find((o) =>
         /reject|deny|no|cancel/i.test(
           `${o.optionId ?? ""} ${o.name ?? ""} ${o.kind ?? ""}`,
