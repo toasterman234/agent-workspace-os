@@ -147,10 +147,13 @@ export class DCodeAcpAdapter implements AgentAdapter {
         this.handleDeath(`exited code=${code ?? "null"} signal=${signal ?? "null"}`),
       );
 
-      // ACP handshake.
+      // ACP handshake. Do NOT advertise fs capabilities — we respond to
+      // fs/* requests with empty results (the gateway is not the file
+      // authority), which causes DCode to stall or error. Let DCode use its
+      // own native tools for file I/O instead.
       await this.request("initialize", {
         protocolVersion: 1,
-        clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } },
+        clientCapabilities: {},
       });
       this.initialized = true;
     })();
