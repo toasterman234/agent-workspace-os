@@ -39,6 +39,41 @@ Also added defensive pid-scoping: `ProcessManager`'s `process` events now includ
 
 Verified via `scripts/test-gw-2turn.cjs` (new): two `chat.send` calls on one reused session — mirrors what `AcpEngine.resolveSessionId()` actually does — stream correctly, persist correctly (`status: completed`, real `response` text), and `chat.history` replays both turns with real assistant text. No more duplicate `chat:final`, no more stuck `running` rows.
 
+## DCode ACP adapter + gateway restructure
+
+### `dcode --acp` wire protocol, verified empirically (deepagents-code 0.1.51)
+JSON-RPC 2.0 over stdio, same family Zed's Agent Client Protocol uses:
+```
+client -> initialize {protocolVersion, clientCapabilities}
+       <- {protocolVersion, agentCapabilities}
+client -> session/new {cwd, mcpServers:[]}  -> {sessionId}
+client -> session/load {sessionId, cwd, mcpServers:[]} -> {}   (resume)
+client -> session/prompt {sessionId, prompt:[{type:"text",text}]}
+       <- session/update notifications:
+            agent_message_chunk  {update:{sessionUpdate, content:{text}}}
+            tool_call            {update:{toolCallId,title,kind,status,rawInput}}
+            tool_call_update     {update:{toolCallId,status,content:[...]}}
+       <- {stopReason:"end_turn"|"cancelled"}   (prompt response)
+client -> session/cancel {sessionId}   (NOTIFICATION, no id) -> cancels turn
+
+server -> session/request_permission {options:[{optionId,...}]}   (request)
+server -> fs/read_text_file / fs/write_text_file  (requests)
+```
+One process is spawned per agent and reused across turns (multi-turn: same pid) — matches the Codex adapter's long-lived-process model. `DCodeAcpAdapter` (`packages/acp-gateway/src/adapters/dcode/DCodeAcpAdapter.ts`) never auto-approves `session/request_permission` — it surfaces the request as a normalized `permission.requested` event for observability and declines by selecting a reject/deny option when present, otherwise responds `{outcome:{outcome:"cancelled"}}`. `fs/read_text_file`/`fs/write_text_file` requests are answered with empty/no-op results — the gateway is not the file authority for DCode; DCode's own tools do the real reads/writes.
+
+### `runtime/` vs `adapters/` split
+The gateway's `src/` was flat (`process-manager.ts`, `codex-event-mapper.ts`, `rpc.ts` all Codex-shaped) and adding a second, structurally different wire protocol (JSON-RPC vs line-delimited JSON) would have meant more Codex-specific branching in `rpc.ts`. Instead:
+- `runtime/` holds everything that doesn't know which agent it's talking to: `NormalizedAgentEvent.ts` (the common event vocabulary — `assistant.delta`, `tool.started`, `tool.completed`, `turn.started`, `turn.completed`, `turn.error`, `permission.requested`), `RunController.ts` (run lifecycle/persistence), `SessionController.ts` (session/provider-session-id mapping), `wire.ts` (NormalizedAgentEvent → browser wire frame).
+- `adapters/` holds one directory per wire protocol, each implementing the same `AgentAdapter` interface (`start`, `prompt`, `abort`, `onEvent`, `onExit`, `isRunning`, `pid`, `disconnect`, `capabilities`): `adapters/codex/CodexJsonAdapter.ts` (the old process-manager + codex-event-mapper logic, unified), `adapters/dcode/DCodeAcpAdapter.ts` (new), `adapters/registry.ts` (`AdapterRegistry` — picks the concrete adapter class from `AgentConfig.adapter`, the only place that knows which class serves which protocol).
+- `rpc.ts` and `server.ts` now depend only on `AgentAdapter`/`RunController`/`SessionController`/`AdapterRegistry` — zero remaining Codex- or DCode-specific code in the transport layer. Adding a third agent means adding a third `adapters/<name>/` directory and one line in `registry.ts`, not touching `rpc.ts`.
+- Verified via grep that nothing still referenced the flat `process-manager.ts`/`codex-event-mapper.ts` files before deleting them — their logic lives on unchanged inside `CodexJsonAdapter`, so this was "isolate, don't discard," not a rewrite-and-hope.
+
+### Multi-turn verification result
+`scripts/test-gw-dcode-2turn.cjs` sends two `chat.send` calls on the same gateway session (mirrors what the browser UI's session-reuse logic does) and checks `agents.list` pid between turns. Result: turn 1 ("ALPHA") and turn 2 ("BETA") both streamed the correct text and reached `state: final`; the `dcode` entry in `agents.list` reported the same pid (`26016`) after both turns, confirming the ACP subprocess is reused, not respawned, across turns — matching the long-lived-process contract the Codex adapter already had. Direct inspection of `gateway.db`'s `runs` table after the run showed both rows with `agent_id: "dcode"`, `status: "completed"`, real `prompt`/`response` text (not placeholders), and identical `session_id`.
+
+### Browser verification gap
+No browser-automation tool (Interceptor or otherwise) was reachable in this session — confirmed by searching the available/deferred tool set, which returned no browser-control tool. Rather than claim a browser check that didn't happen, this was verified at the protocol layer instead: the gateway was started for real (`npx tsx src/index.ts`), `curl http://localhost:18791/` confirmed the built Next.js SPA (Claw client) serves its HTML shell correctly, and the DCode 2-turn script drove the exact same WebSocket RPC/event protocol (`chat.send`, `session/update`-derived events, `chat:final`) the browser UI uses. What remains unverified is purely visual/UX: does the DCode thread render correctly in the sidebar and composer. Manual steps for whoever picks this up: `ACP_AGENTS_CONFIG=packages/acp-gateway/config/agents.json pnpm --filter @agent-workspace/acp-gateway dev`, open the served UI in a real browser, select/create the "DCode" thread, send a message, confirm streamed text renders and a reload replays history correctly (the same checks Phase H.1 did for Codex).
+
 ## Next technical decisions needed
 
 1. **Server-side gateway**: New pnpm package at `packages/acp-gateway/` or a separate repo? Recommendation: separate package to avoid cross-contamination with the existing `claw-client`/`claw-plugin` build pipeline.

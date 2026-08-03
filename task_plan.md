@@ -112,11 +112,24 @@ Replace OpenClaw server-side storage for ACP agents:
 - [ ] Test process crashes and reconnects
 - [ ] Test simultaneous sessions
 - [ ] Test multiple project directories
-- [ ] Add Codex/Claude/Gemini/Pi/OpenCode configurations
+- [x] Add DCode (real ACP/JSON-RPC) configuration — `DCodeAcpAdapter`, registered as default agent
+- [ ] Add Claude/Gemini/Pi/OpenCode configurations
 - [ ] Add install detection and health checks
 - [ ] Add safe environment-variable handling
 - [ ] Add mobile/Tailscale authentication
-- **Status:** not started
+- **Status:** in progress (DCode adapter added)
+
+### Phase K: DCode ACP client + gateway restructure
+Add a real second agent (DCode) speaking actual Agent Client Protocol, and split the gateway's src/ so agent-specific logic lives behind a common adapter interface instead of being hand-rolled per agent in `rpc.ts`:
+- [x] Empirically probe `dcode --acp` (deepagents-code 0.1.51) wire protocol: `initialize` → `session/new`/`session/load` → `session/prompt` → `session/update` notifications → prompt response `{stopReason}`; server-initiated `session/request_permission`, `fs/read_text_file`, `fs/write_text_file`; `session/cancel` notification for abort.
+- [x] Restructure `src/` into `runtime/` (transport-agnostic: `NormalizedAgentEvent.ts`, `RunController.ts`, `SessionController.ts`, `wire.ts`) and `adapters/` (`codex/CodexJsonAdapter.ts`, `dcode/DCodeAcpAdapter.ts`, `registry.ts`)
+- [x] `AgentAdapter` interface unifies both wire protocols behind one contract (`start`, `prompt`, `abort`, `onEvent`, `onExit`, `isRunning`, `pid`, `disconnect`, `capabilities`)
+- [x] Moved old `process-manager.ts`/`codex-event-mapper.ts` logic into `CodexJsonAdapter`; confirmed via grep no remaining references, then `git rm`'d the orphaned flat files (logic preserved, not discarded)
+- [x] `config/agents.json` — DCode registered first/default (`adapter: "acp"`), Codex second (`adapter: "json"`)
+- [x] Multi-turn verification script (`scripts/test-gw-dcode-2turn.cjs`) — two `chat.send` calls on one session, confirms same subprocess pid reused across turns, both turns reach `state: final` with correct text, DB shows both runs `status: completed` with real prompt/response
+- [x] Quality gates: `pnpm typecheck` ✓, `pnpm test` ✓ (7/7)
+- [ ] Browser (UI) verification of the DCode thread — no browser-automation tool available this session; verified instead via the same WS protocol the UI drives (see `progress.md`)
+- **Status:** adapter + restructure + config + multi-turn verification complete; browser-level confirmation outstanding
 
 ## Decisions
 | Decision | Rationale |
