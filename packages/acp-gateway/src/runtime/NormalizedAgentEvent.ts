@@ -17,6 +17,11 @@ export type NormalizedAgentEvent =
   | { type: "tool.completed"; runId: string; toolCallId: string; output?: unknown; isError?: boolean }
   | { type: "file.changed"; runId: string; path?: string; diff?: string }
   | { type: "file.created"; runId: string; path: string; content?: string }
+  | {
+      type: "plan.updated";
+      runId: string;
+      entries: Array<{ content: string; status: "pending" | "in_progress" | "completed" }>;
+    }
   | { type: "permission.requested"; runId: string; requestId: string; details: unknown }
   | { type: "turn.completed"; runId: string; usage?: unknown }
   | { type: "turn.error"; runId: string; error: string };

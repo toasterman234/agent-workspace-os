@@ -24,6 +24,13 @@ import type {
  *               agent_message_chunk  {update:{sessionUpdate, content:{text}}}
  *               tool_call            {update:{toolCallId,title,kind,status,rawInput}}
  *               tool_call_update     {update:{toolCallId,status,content:[...]}}
+ *               plan                 {update:{sessionUpdate:"plan",entries:[{content,status}]}}
+ *                                     (driven by the write_todos tool; sent on every
+ *                                     todo-list change, including an empty-entries
+ *                                     clear. NOTE: agent_thought_chunk is defined by
+ *                                     the ACP SDK schema but is not constructed
+ *                                     anywhere in deepagents-code 0.1.51 — DCode does
+ *                                     not currently emit reasoning/thought events.)
  *          <- {stopReason:"end_turn"|"cancelled"}   (prompt response)
  *   client -> session/cancel {sessionId}   (NOTIFICATION, no id) -> cancels turn
  *
@@ -55,6 +62,7 @@ interface SessionUpdate {
     kind?: string;
     status?: string;
     rawInput?: unknown;
+    entries?: Array<{ content?: string; status?: string }>;
   };
 }
 
@@ -287,7 +295,9 @@ export class DCodeAcpAdapter implements AgentAdapter {
 
           if (
             meta &&
-            (meta.name === "write_file" || meta.name === "write") &&
+            (meta.name.startsWith("Write ") ||
+              meta.name === "write_file" ||
+              meta.name === "write") &&
             update.status === "completed"
           ) {
             const rawInput = meta.rawInput as
@@ -322,8 +332,20 @@ export class DCodeAcpAdapter implements AgentAdapter {
         }
         break;
       }
+      case "plan": {
+        const entries = (update.entries ?? []).map((e) => ({
+          content: e.content ?? "",
+          status:
+            e.status === "in_progress" || e.status === "completed"
+              ? (e.status as "in_progress" | "completed")
+              : ("pending" as const),
+        }));
+        this.emit({ type: "plan.updated", runId, entries });
+        break;
+      }
       default:
-        // plan / thought / other update kinds — not surfaced yet.
+        // thought / other update kinds — not surfaced yet (DCode doesn't
+        // currently emit agent_thought_chunk; see class doc comment).
         break;
     }
   }
