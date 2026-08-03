@@ -335,14 +335,41 @@ export class DCodeAcpAdapter implements AgentAdapter {
     this.respond(id, {});
   }
 
-  private request(method: string, params: Record<string, unknown>): Promise<JsonRpcMessage> {
+  /** Requests that can legitimately run long (an agentic turn may involve
+   *  several tool calls / permission round-trips) get a generous timeout;
+   *  everything else should resolve quickly or something is actually wrong.
+   *  Without this, a turn that never gets an explicit completion response
+   *  from dcode (e.g. it silently stalls after a declined permission
+   *  request) leaves the run — and the composer's busy state — stuck
+   *  forever, with no way to recover short of the user clicking Stop. */
+  private static readonly DEFAULT_TIMEOUT_MS = 30_000;
+  private static readonly PROMPT_TIMEOUT_MS = 10 * 60_000;
+
+  private request(
+    method: string,
+    params: Record<string, unknown>,
+    timeoutMs: number = DCodeAcpAdapter.DEFAULT_TIMEOUT_MS,
+  ): Promise<JsonRpcMessage> {
     const proc = this.proc;
     if (!proc?.stdin || proc.exitCode !== null) {
       return Promise.reject(new Error("dcode process not available"));
     }
     const id = this.nextId++;
     return new Promise<JsonRpcMessage>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`dcode ${method} timed out after ${timeoutMs}ms with no response`));
+      }, timeoutMs);
+      this.pending.set(id, {
+        resolve: (msg) => {
+          clearTimeout(timer);
+          resolve(msg);
+        },
+        reject: (err) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+      });
       proc.stdin!.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
     });
   }
@@ -390,10 +417,14 @@ export class DCodeAcpAdapter implements AgentAdapter {
     this.emit({ type: "turn.started", runId: req.runId });
 
     try {
-      const res = await this.request("session/prompt", {
-        sessionId,
-        prompt: [{ type: "text", text: req.text }],
-      });
+      const res = await this.request(
+        "session/prompt",
+        {
+          sessionId,
+          prompt: [{ type: "text", text: req.text }],
+        },
+        DCodeAcpAdapter.PROMPT_TIMEOUT_MS,
+      );
       const stopReason = (res.result as { stopReason?: string } | undefined)?.stopReason;
       if (res.error) {
         this.emit({ type: "turn.error", runId: req.runId, error: res.error.message });
