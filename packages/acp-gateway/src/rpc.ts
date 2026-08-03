@@ -1,72 +1,119 @@
+import { resolve } from "node:path";
 import type { WebSocket } from "ws";
-import { mapCodexEvent } from "./codex-event-mapper.js";
+import type { AdapterRegistry } from "./adapters/registry.js";
 import type { GatewayDB } from "./db.js";
-import type { ProcessManager } from "./process-manager.js";
-import type {
-  EventFrame,
-  RequestFrame,
-  ResponseFrame,
-  RunRecord,
-  SessionRecord,
-} from "./protocol.js";
+import type { RequestFrame, ResponseFrame, RunRecord } from "./protocol.js";
+import type { NormalizedAgentEvent } from "./runtime/NormalizedAgentEvent.js";
+import type { RunController } from "./runtime/RunController.js";
+import type { SessionController } from "./runtime/SessionController.js";
+import { normalizedToWire } from "./runtime/wire.js";
 
+/**
+ * RpcDispatcher — WebSocket request handler. It no longer hardcodes Codex:
+ * every chat turn is dispatched through the AgentAdapter that the agent's
+ * config selects (via AdapterRegistry), and run lifecycle is owned by the
+ * RunController (completed/errored from turn.* events, not process exit).
+ */
 export class RpcDispatcher {
+  /** runId -> adapter, so chat.abort can reach the right in-flight turn. */
+  private activeRuns = new Map<string, { agentId: string }>();
+  private cwd: string;
+
   constructor(
     private db: GatewayDB,
-    private pm: ProcessManager,
-  ) {}
+    private registry: AdapterRegistry,
+    private runs: RunController,
+    private sessions: SessionController,
+    cwd?: string,
+  ) {
+    // Default working directory for agent turns. Overridable via ACP_AGENT_CWD.
+    this.cwd = cwd ?? process.env["ACP_AGENT_CWD"] ?? resolve(process.cwd());
+  }
 
-  /** Dispatch an incoming request frame and return a response. */
   async dispatch(frame: RequestFrame, ws: WebSocket): Promise<ResponseFrame> {
     const { id, method, params } = frame;
     try {
       switch (method) {
         case "agents.list": {
-          const statuses = this.pm.listStatuses();
+          const statuses = this.registry.listConfigs().map((c) => {
+            const adapter = this.registry.peek(c.id);
+            return {
+              id: c.id,
+              name: c.name,
+              type: c.type,
+              running: adapter?.isRunning() ?? false,
+              pid: adapter?.pid(),
+            };
+          });
           return { type: "res", id, ok: true, payload: { agents: statuses } };
         }
 
         case "sessions.list": {
-          const agentId = params?.agentId as string | undefined;
-          const sessions = this.db.listSessions(agentId);
-          return { type: "res", id, ok: true, payload: { sessions } };
+          const agentId = params?.["agentId"] as string | undefined;
+          return {
+            type: "res",
+            id,
+            ok: true,
+            payload: { sessions: this.sessions.list(agentId) },
+          };
         }
 
         case "sessions.create": {
-          const agentId = params?.agentId as string;
+          const agentId = params?.["agentId"] as string;
           if (!agentId) return { type: "res", id, ok: false, error: "agentId required" };
-          const title = params?.title as string | undefined;
-          const session = this.db.createSession(agentId, title);
-          return { type: "res", id, ok: true, payload: { session } };
+          const title = params?.["title"] as string | undefined;
+          return {
+            type: "res",
+            id,
+            ok: true,
+            payload: { session: this.sessions.create(agentId, title) },
+          };
         }
 
         case "sessions.delete": {
-          const sessionId = params?.sessionId as string;
+          const sessionId = params?.["sessionId"] as string;
           if (!sessionId) return { type: "res", id, ok: false, error: "sessionId required" };
-          this.db.deleteSession(sessionId);
+          this.sessions.delete(sessionId);
           return { type: "res", id, ok: true };
         }
 
-        case "chat.send": {
+        case "chat.send":
           return this.handleChatSend(id, params, ws);
-        }
 
         case "chat.abort": {
-          const agentId = params?.agentId as string;
-          if (!agentId) return { type: "res", id, ok: false, error: "agentId required" };
-          const killed = this.pm.kill(agentId);
-          return { type: "res", id, ok: killed };
+          const runId = params?.["runId"] as string | undefined;
+          const agentId = params?.["agentId"] as string | undefined;
+          if (runId) {
+            const active = this.activeRuns.get(runId);
+            if (active) {
+              this.registry.peek(active.agentId)?.abort(runId);
+              this.runs.abort(runId);
+              return { type: "res", id, ok: true };
+            }
+          }
+          // Fallback: abort every in-flight run for the agent.
+          if (agentId) {
+            let any = false;
+            for (const [rid, a] of this.activeRuns) {
+              if (a.agentId === agentId) {
+                this.registry.peek(agentId)?.abort(rid);
+                this.runs.abort(rid);
+                any = true;
+              }
+            }
+            return { type: "res", id, ok: any };
+          }
+          return { type: "res", id, ok: false, error: "runId or agentId required" };
         }
 
         case "chat.history": {
-          const sessionId = params?.sessionId as string;
+          const sessionId = params?.["sessionId"] as string;
           if (!sessionId) return { type: "res", id, ok: false, error: "sessionId required" };
           const runs = this.db.listRuns(sessionId);
           const messages: Array<Record<string, unknown>> = [];
-          for (const run of runs) {
-            if (run.prompt) {
-              messages.push({ id: run.id, role: "user", content: run.prompt });
-            }
+          // listRuns returns newest-first; render oldest-first for the UI.
+          for (const run of [...runs].reverse()) {
+            if (run.prompt) messages.push({ id: run.id, role: "user", content: run.prompt });
             if (run.status === "completed") {
               messages.push({
                 id: `assistant-${run.id}`,
@@ -79,6 +126,12 @@ export class RpcDispatcher {
                 role: "assistant",
                 content: `[Error: ${run.error ?? "unknown"}]`,
               });
+            } else if (run.status === "aborted") {
+              messages.push({
+                id: `assistant-${run.id}`,
+                role: "assistant",
+                content: run.response ?? "[Aborted]",
+              });
             }
           }
           return { type: "res", id, ok: true, payload: { messages } };
@@ -90,10 +143,11 @@ export class RpcDispatcher {
             id,
             ok: true,
             payload: {
-              models: [
-                { id: "codex-default", name: "Codex", provider: "openai" },
-                { id: "claude-default", name: "Claude", provider: "anthropic" },
-              ],
+              models: this.registry.listConfigs().map((c) => ({
+                id: `${c.id}-default`,
+                name: c.name,
+                provider: c.type,
+              })),
             },
           };
         }
@@ -111,169 +165,106 @@ export class RpcDispatcher {
     }
   }
 
-  /** Handle chat.send: create a run, spawn the agent, stream events back. */
   private handleChatSend(
     reqId: string,
     params: Record<string, unknown> | undefined,
     ws: WebSocket,
   ): ResponseFrame {
-    const agentId = params?.agentId as string | undefined;
-    const sessionId = params?.sessionId as string | undefined;
-    const message = params?.message as string | undefined;
+    const agentId = params?.["agentId"] as string | undefined;
+    const sessionIdParam = params?.["sessionId"] as string | undefined;
+    const message = (params?.["message"] as string | undefined) ?? "";
 
     if (!agentId) return { type: "res", id: reqId, ok: false, error: "agentId required" };
-
-    // Resolve or create session
-    let session: SessionRecord;
-    if (sessionId) {
-      const existing = this.db.getSession(sessionId);
-      if (!existing) {
-        // Session doesn't exist yet — create it on demand
-        session = this.db.createSession(agentId);
-      } else {
-        session = existing;
-      }
-    } else {
-      session = this.db.createSession(agentId);
+    if (!this.registry.getConfig(agentId)) {
+      return { type: "res", id: reqId, ok: false, error: `unknown agent: ${agentId}` };
     }
 
-    // Create run record
-    const run = this.db.createRun(session.id, agentId, message);
+    const session = this.sessions.resolveOrCreate(agentId, sessionIdParam);
+    const run = this.runs.create(session.id, agentId, message);
 
-    // Respond synchronously — the run ID lets the client track events
-    const response: ResponseFrame = {
+    // Fire the turn asynchronously; the run id lets the client track events.
+    void this.runTurn(agentId, run, session.id, message, ws);
+
+    return {
       type: "res",
       id: reqId,
       ok: true,
       payload: { runId: run.id, sessionId: session.id },
     };
-
-    // Start the agent process and stream events back
-    this.streamRun(agentId, run, message, ws);
-
-    return response;
   }
 
-  /** Spawn the agent process and relay JSON-line events to the browser. */
-  private streamRun(
+  /** Drive one prompt turn through the agent's adapter, relaying events. */
+  private async runTurn(
     agentId: string,
     run: RunRecord,
-    message: string | undefined,
+    sessionId: string,
+    message: string,
     ws: WebSocket,
-  ): void {
-    let buffered = "";
-    let responseText = "";
-    let sentFinal = false;
-    let spawnedPid: number | undefined;
-
-    const send = (event: string, payload: unknown) => {
+  ): Promise<void> {
+    const send = (frame: { type: "event"; event: string; payload?: unknown }) => {
       if (ws.readyState !== ws.OPEN) return;
-      const frame: EventFrame = { type: "event", event, payload };
       ws.send(JSON.stringify(frame));
     };
 
-    const onProcessEvent = (ev: {
-      agentId: string;
-      type: string;
-      data: string;
-      code?: number | null;
-      pid?: number;
-    }) => {
-      if (ev.agentId !== agentId) return;
-      if (spawnedPid !== undefined && ev.pid !== undefined && ev.pid !== spawnedPid) return;
-
-      if (ev.type === "stdout") {
-        buffered += ev.data;
-        // Try to parse JSON lines from the buffer
-        const lines = buffered.split("\n");
-        // Keep the last (potentially incomplete) line in buffer
-        buffered = lines.pop() ?? "";
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-          if (!trimmed.startsWith("{")) {
-            // Non-JSON log line (e.g. rmcp errors) — send as stderr
-            send("agent", {
-              stream: "stderr",
-              runId: run.id,
-              data: { delta: trimmed },
-            });
-            continue;
-          }
-          // Parse and map Codex JSON events
-          const events = mapCodexEvent(trimmed, run.id);
-          for (const e of events) {
-            if (e.event === "agent") {
-              const data = (e.payload as { stream?: string; data?: { text?: string } }).data;
-              const stream = (e.payload as { stream?: string }).stream;
-              if (stream === "assistant" && data?.text) {
-                responseText = data.text;
-              }
-            }
-            if (e.event === "chat") {
-              sentFinal = true;
-            }
-            send(e.event, e.payload);
-          }
-        }
-      } else if (ev.type === "stderr") {
-        send("agent", {
-          stream: "stderr",
-          runId: run.id,
-          data: { delta: ev.data },
-        });
-      } else if (ev.type === "exit") {
-        this.pm.off("process", onProcessEvent);
-        const ok = ev.code === 0;
-        this.db.updateRun(run.id, {
-          status: ok ? "completed" : "error",
-          response: responseText || undefined,
-          error: ok ? undefined : `exit code ${ev.code}`,
-        });
-        // If the process exited without emitting turn.completed JSON,
-        // send a final chat event so the client closes the stream.
-        if (!sentFinal) {
-          send("chat", {
-            runId: run.id,
-            sessionKey: run.sessionId,
-            state: ok ? "final" : "error",
-            stopReason: ok ? "end_turn" : "error",
-          });
-        }
-      } else if (ev.type === "error") {
-        this.pm.off("process", onProcessEvent);
-        this.db.updateRun(run.id, { status: "error", error: ev.data });
-        send("chat", {
-          runId: run.id,
-          sessionKey: run.sessionId,
-          state: "error",
-          errorMessage: ev.data,
-        });
-      }
-    };
-
-    this.pm.on("process", onProcessEvent);
-
-    // Spawn the process (or get the already-running one)
+    let adapter;
     try {
-      const proc = this.pm.spawn(agentId);
-      spawnedPid = proc.pid;
-      if (message && proc.stdin && proc.exitCode === null) {
-        proc.stdin.write(message + "\n");
-        proc.stdin.end();
+      adapter = this.registry.get(agentId);
+    } catch (err) {
+      this.runs.error(run.id, err instanceof Error ? err.message : "adapter unavailable");
+      for (const f of normalizedToWire(
+        { type: "turn.error", runId: run.id, error: err instanceof Error ? err.message : "adapter unavailable" },
+        sessionId,
+      )) {
+        send(f);
+      }
+      return;
+    }
+
+    this.activeRuns.set(run.id, { agentId });
+
+    // Relay this run's normalized events to the browser + fold into the run.
+    const onEvent = (ev: NormalizedAgentEvent) => {
+      if (ev.runId !== run.id) return;
+      this.runs.ingest(ev);
+      for (const f of normalizedToWire(ev, sessionId)) send(f);
+    };
+    const unsubEvent = adapter.onEvent(onEvent);
+
+    // Crash fallback: if the process dies while this run is still running,
+    // mark it error and close the client stream.
+    const unsubExit = adapter.onExit((reason) => {
+      const failed = this.runs.onProcessDeath([run.id], reason);
+      if (failed.includes(run.id)) {
+        for (const f of normalizedToWire(
+          { type: "turn.error", runId: run.id, error: `agent process ended (${reason})` },
+          sessionId,
+        )) {
+          send(f);
+        }
+      }
+    });
+
+    try {
+      const result = await adapter.prompt({
+        runId: run.id,
+        providerSessionId: this.sessions.getProviderSessionId(sessionId),
+        cwd: this.cwd,
+        text: message,
+      });
+      if (result.providerSessionId) {
+        this.sessions.setProviderSessionId(sessionId, result.providerSessionId);
       }
     } catch (err) {
-      this.pm.off("process", onProcessEvent);
-      this.db.updateRun(run.id, {
-        status: "error",
-        error: err instanceof Error ? err.message : "spawn failed",
-      });
-      send("chat", {
-        runId: run.id,
-        sessionKey: run.sessionId,
-        state: "error",
-        errorMessage: err instanceof Error ? err.message : "spawn failed",
-      });
+      const msg = err instanceof Error ? err.message : "turn failed";
+      if (this.runs.error(run.id, msg)) {
+        for (const f of normalizedToWire({ type: "turn.error", runId: run.id, error: msg }, sessionId)) {
+          send(f);
+        }
+      }
+    } finally {
+      unsubEvent();
+      unsubExit();
+      this.activeRuns.delete(run.id);
     }
   }
 }

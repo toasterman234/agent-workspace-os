@@ -2,10 +2,12 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { readFileSync, existsSync } from "node:fs";
 import { join, extname } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
-import { RpcDispatcher } from "./rpc.js";
+import type { AdapterRegistry } from "./adapters/registry.js";
 import type { GatewayDB } from "./db.js";
-import type { ProcessManager } from "./process-manager.js";
 import type { RequestFrame, ResponseFrame } from "./protocol.js";
+import { RpcDispatcher } from "./rpc.js";
+import type { RunController } from "./runtime/RunController.js";
+import type { SessionController } from "./runtime/SessionController.js";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html",
@@ -24,12 +26,25 @@ export interface GatewayServerOptions {
   wsPath?: string; // WebSocket path, default "/ws"
 }
 
+export interface GatewayRuntime {
+  db: GatewayDB;
+  registry: AdapterRegistry;
+  runs: RunController;
+  sessions: SessionController;
+  agentCwd?: string;
+}
+
 export function createGatewayServer(
-  db: GatewayDB,
-  pm: ProcessManager,
+  runtime: GatewayRuntime,
   options: GatewayServerOptions,
 ): ReturnType<typeof createServer> {
-  const dispatcher = new RpcDispatcher(db, pm);
+  const dispatcher = new RpcDispatcher(
+    runtime.db,
+    runtime.registry,
+    runtime.runs,
+    runtime.sessions,
+    runtime.agentCwd,
+  );
   const wsPath = options.wsPath ?? "/ws";
 
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
