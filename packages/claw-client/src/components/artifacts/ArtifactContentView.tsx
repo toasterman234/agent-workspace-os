@@ -88,6 +88,17 @@ export function ArtifactContentView({
     );
   }
 
+  if (resolvedKind === "html" && textContent) {
+    return (
+      <iframe
+        srcDoc={textContent}
+        title={title}
+        sandbox="allow-scripts"
+        className="h-full min-h-[520px] w-full rounded-b-xl border-0 bg-white"
+      />
+    );
+  }
+
   if (resolvedKind === "ppt") {
     return (
       <div className="flex h-full items-center justify-center p-xl">

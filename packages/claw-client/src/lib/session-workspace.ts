@@ -3,7 +3,7 @@
 import { separateContentAndContext } from "@/lib/content-parser";
 import type { UploadMeta } from "@/lib/engines/types";
 
-export type WorkspacePreviewKind = "image" | "pdf" | "markdown" | "code" | "text" | "ppt" | "file";
+export type WorkspacePreviewKind = "image" | "pdf" | "markdown" | "code" | "text" | "html" | "ppt" | "file";
 
 export type GatewayAttachmentPayload = {
   type?: string;
@@ -197,6 +197,7 @@ export function inferWorkspacePreviewKind(
   kind?: string,
 ): WorkspacePreviewKind {
   const loweredKind = (kind ?? "").toLowerCase();
+  if (loweredKind === "html") return "html";
   if (loweredKind === "markdown") return "markdown";
   if (loweredKind === "image") return "image";
   if (loweredKind === "pdf") return "pdf";
@@ -216,6 +217,7 @@ export function inferWorkspacePreviewKind(
     return "ppt";
   }
   if (loweredName.endsWith(".md") || loweredMime === "text/markdown") return "markdown";
+  if (loweredName.endsWith(".html") || loweredName.endsWith(".htm")) return "html";
   if (isTextLikeFile(name, mimeType)) {
     if (
       /\.(c|cc|cpp|cs|css|go|html|java|js|json|jsx|kt|mjs|php|py|rb|rs|scss|sh|sql|svg|toml|ts|tsx|xml|yaml|yml)$/i.test(
