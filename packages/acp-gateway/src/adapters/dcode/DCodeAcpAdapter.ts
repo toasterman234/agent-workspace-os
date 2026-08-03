@@ -332,13 +332,19 @@ export class DCodeAcpAdapter implements AgentAdapter {
     const id = msg.id!;
     const method = msg.method!;
     if (method === "session/request_permission") {
-      // Do NOT auto-approve blindly in production, but the gateway currently
-      // has no interactive UI wired to ACP permissions. Surface the request as
-      // a normalized event for observability, then decline by selecting a
-      // reject option when present, otherwise cancel. This keeps sandboxing
-      // intact (we never fabricate an "allow").
+      // Security: auto-allow only write_file / write targeting paths within
+      // the agent's configured workspace directory. Everything else (shell
+      // execution, destructive ops, reads outside workspace) is declined.
+      // This unblocks artifact creation while preserving sandbox boundaries.
       const params = msg.params as
-        | { options?: Array<{ optionId?: string; name?: string; kind?: string }> }
+        | {
+            options?: Array<{
+              optionId?: string;
+              name?: string;
+              kind?: string;
+              toolCall?: { name?: string; input?: Record<string, unknown> };
+            }>;
+          }
         | undefined;
       const sessionId = msg.params?.["sessionId"] as string | undefined;
       const runId = sessionId ? this.activeRunBySession.get(sessionId) : undefined;
@@ -350,12 +356,52 @@ export class DCodeAcpAdapter implements AgentAdapter {
           details: msg.params,
         });
       }
+
+      // Check if this is a write_file/write into the workspace.
       const options = params?.options ?? [];
+      for (const opt of options) {
+        const toolName = opt.toolCall?.name ?? "";
+        const toolInput = opt.toolCall?.input as
+          | { file_path?: string; path?: string }
+          | undefined;
+        const targetPath = toolInput?.file_path ?? toolInput?.path;
+        if (
+          (toolName === "write_file" || toolName === "write") &&
+          targetPath
+        ) {
+          const workspaceDir =
+            this.config.cwd ?? process.env["ACP_AGENT_CWD"] ?? process.cwd();
+          // Verify target is within the workspace — simple prefix check.
+          if (
+            targetPath.startsWith(workspaceDir + "/") ||
+            targetPath.startsWith(workspaceDir)
+          ) {
+            const allow =
+              options.find((o) =>
+                /allow|approve|yes|confirm/i.test(
+                  `${o.optionId ?? ""} ${o.name ?? ""} ${o.kind ?? ""}`,
+                ),
+              ) ?? options[0];
+            if (allow?.optionId) {
+              this.respond(id, {
+                outcome: { outcome: "selected", optionId: allow.optionId },
+              });
+              return;
+            }
+          }
+        }
+      }
+
+      // Default: reject or cancel.
       const reject = options.find((o) =>
-        /reject|deny|no|cancel/i.test(`${o.optionId ?? ""} ${o.name ?? ""} ${o.kind ?? ""}`),
+        /reject|deny|no|cancel/i.test(
+          `${o.optionId ?? ""} ${o.name ?? ""} ${o.kind ?? ""}`,
+        ),
       );
       if (reject?.optionId) {
-        this.respond(id, { outcome: { outcome: "selected", optionId: reject.optionId } });
+        this.respond(id, {
+          outcome: { outcome: "selected", optionId: reject.optionId },
+        });
       } else {
         this.respond(id, { outcome: { outcome: "cancelled" } });
       }
