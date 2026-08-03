@@ -88,6 +88,14 @@ Split `useGateway.ts` into capability-gated hooks:
 - [x] Existing OpenClaw behavior preserved unchanged
 - **Status:** complete
 
+### Phase H.1: UI wiring bugfixes (post-Phase-H)
+Found and fixed while doing first live browser verification of the ACP engine:
+- [x] `buildEngine()`'s `events` bundle was silently dropped by `createAcpEngine()` and the `"acp"` registry entry — `onConnectionStateChange` never fired, so the UI stayed on "Connecting" forever even though the WebSocket connected fine. Fixed by threading `events` through both call sites and having `AcpEngine` invoke the callback on open/close/error.
+- [x] `AcpEngine.fetchThreadList()` didn't exist, so the sidebar always showed "No agents yet" and the home composer had no thread to target (`mainThreadId` stayed `null`). Added a synthetic one-thread-per-agent list backed by `listAgents()`, and had `AcpEngine` push `onKnownAgentIdsChanged`/`onModelDefaultsChanged` after connecting.
+- [x] `AcpEngine.sendMessage`/`abort` hardcoded `agentId: "codex"` regardless of the thread clicked. Now resolves the real agent id from the thread id.
+- [ ] **Known broken, uncommitted risk**: added `sessionByThread` caching + `resolveSessionId()` so repeat sends reuse one gateway session instead of creating a new one per message, and added a `response` column on `runs` so `chat.history` can replay real assistant text instead of a `[Run ... completed]` placeholder. Live streaming still works, but a test run got stuck at `status: running` in the DB with no `response` saved — the exit handler isn't reliably firing/persisting. **Not verified working — needs its own debugging pass before it can be trusted.**
+- **Status:** partially complete — connection-state and thread-list fixes verified in a real browser (Interceptor); session-persistence changes are unverified and may be broken.
+
 ### Phase I: Persistent apps and artifacts
 Replace OpenClaw server-side storage for ACP agents:
 - [ ] `app_create` / `app_update` in SQLite

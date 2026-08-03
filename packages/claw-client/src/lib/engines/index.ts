@@ -27,6 +27,6 @@ registerEngine("openclaw", (config, events): Engine => {
   );
 });
 
-registerEngine("acp", (config): Engine => {
-  return createAcpEngine(config);
+registerEngine("acp", (config, events): Engine => {
+  return createAcpEngine(config, events);
 });

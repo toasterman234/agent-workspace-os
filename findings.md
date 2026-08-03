@@ -25,6 +25,12 @@ Added `crons` and `notifications` to `EngineCapabilities` as optional booleans. 
 - OpenClaw notifications (`onSessionChanged`, cron broadcasts)
 - Agent-ID hydration behavior (`_agentIdsHydrated`)
 
+## UI wiring gaps found during first live browser test
+
+The Phase C-H work typechecked and built cleanly but was never exercised against a real browser until this session. Three real bugs surfaced immediately, all from the same root cause: `EngineFactory` signatures accept `(config, events)`, but two call sites — `createAcpEngine()` and the `"acp"` entry in `engines/index.ts` — only forwarded `config`, silently dropping `events`. Nothing failed loudly; the WebSocket connected and RPCs worked, so it looked functional in every non-visual check (typecheck/lint/build/gateway smoke test). Only opening the actual UI showed the symptom (stuck on "Connecting", empty sidebar). Lesson: an `Engine` factory that ignores half its parameters can't be caught by TypeScript if the parameter type is `Record<string, unknown>` — worth a lint rule or a narrower type if this pattern gets copied for a third engine.
+
+Also found: `AcpEngine.sendMessage`/`chat.send` never passed a `sessionId`, so the gateway created a brand-new session on every message. Combined with `chat.history` returning a hardcoded `[Run ... completed]` placeholder instead of real assistant text, this meant conversations only ever "worked" live-streamed and never survived a reload. Added `AcpEngine.resolveSessionId()` (cache thread→session, reuse via `sessions.list`/`sessions.create`) and a `runs.response` column on the gateway DB — **this part is unverified**; a live test left a run stuck at `status: running` with no response persisted, so the exit-handling path needs another look before relying on it.
+
 ## Next technical decisions needed
 
 1. **Server-side gateway**: New pnpm package at `packages/acp-gateway/` or a separate repo? Recommendation: separate package to avoid cross-contamination with the existing `claw-client`/`claw-plugin` build pipeline.

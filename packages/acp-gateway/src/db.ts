@@ -60,6 +60,7 @@ export class GatewayDB {
         agent_id TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'running',
         prompt TEXT,
+        response TEXT,
         error TEXT,
         started_at TEXT NOT NULL DEFAULT (datetime('now')),
         ended_at TEXT
@@ -67,6 +68,12 @@ export class GatewayDB {
     `);
     this.db.run("CREATE INDEX IF NOT EXISTS idx_runs_session ON runs(session_id)");
     this.db.run("CREATE INDEX IF NOT EXISTS idx_runs_agent ON runs(agent_id)");
+    // Migrate older databases created before `response` existed.
+    const cols = this.db.exec("PRAGMA table_info(runs)");
+    const hasResponse = cols[0]?.values.some((row) => row[1] === "response") ?? true;
+    if (!hasResponse) {
+      this.db.run("ALTER TABLE runs ADD COLUMN response TEXT");
+    }
     this.save();
   }
 
@@ -142,7 +149,7 @@ export class GatewayDB {
 
   getRun(id: string): RunRecord | null {
     const stmt = this.db.prepare(
-      "SELECT id, session_id, agent_id, status, prompt, error, started_at, ended_at FROM runs WHERE id = ?",
+      "SELECT id, session_id, agent_id, status, prompt, response, error, started_at, ended_at FROM runs WHERE id = ?",
     );
     stmt.bind([id]);
     if (!stmt.step()) {
@@ -157,6 +164,7 @@ export class GatewayDB {
       agentId: row["agent_id"] as string,
       status: row["status"] as RunRecord["status"],
       prompt: (row["prompt"] as string) ?? undefined,
+      response: (row["response"] as string) ?? undefined,
       error: (row["error"] as string) ?? undefined,
       startedAt: row["started_at"] as string,
       endedAt: (row["ended_at"] as string) ?? undefined,
@@ -165,8 +173,8 @@ export class GatewayDB {
 
   listRuns(sessionId?: string): RunRecord[] {
     const sql = sessionId
-      ? "SELECT id, session_id, agent_id, status, prompt, error, started_at, ended_at FROM runs WHERE session_id = ? ORDER BY started_at DESC"
-      : "SELECT id, session_id, agent_id, status, prompt, error, started_at, ended_at FROM runs ORDER BY started_at DESC";
+      ? "SELECT id, session_id, agent_id, status, prompt, response, error, started_at, ended_at FROM runs WHERE session_id = ? ORDER BY started_at DESC"
+      : "SELECT id, session_id, agent_id, status, prompt, response, error, started_at, ended_at FROM runs ORDER BY started_at DESC";
     const results = sessionId ? this.db.exec(sql, [sessionId]) : this.db.exec(sql);
     if (results.length === 0) return [];
     const rows = results[0]!;
@@ -176,18 +184,26 @@ export class GatewayDB {
       agentId: row[rows.columns.indexOf("agent_id")] as string,
       status: row[rows.columns.indexOf("status")] as RunRecord["status"],
       prompt: row[rows.columns.indexOf("prompt")] as string | undefined,
+      response: row[rows.columns.indexOf("response")] as string | undefined,
       error: row[rows.columns.indexOf("error")] as string | undefined,
       startedAt: row[rows.columns.indexOf("started_at")] as string,
       endedAt: row[rows.columns.indexOf("ended_at")] as string | undefined,
     }));
   }
 
-  updateRun(id: string, patch: { status?: RunRecord["status"]; error?: string }): void {
+  updateRun(
+    id: string,
+    patch: { status?: RunRecord["status"]; response?: string; error?: string },
+  ): void {
     const fields: string[] = [];
     const values: unknown[] = [];
     if (patch.status !== undefined) {
       fields.push("status = ?");
       values.push(patch.status);
+    }
+    if (patch.response !== undefined) {
+      fields.push("response = ?");
+      values.push(patch.response);
     }
     if (patch.error !== undefined) {
       fields.push("error = ?");

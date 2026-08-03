@@ -70,4 +70,5 @@ export interface RunRecord {
   endedAt?: string;
   prompt?: string;
   error?: string;
+  response?: string;
 }

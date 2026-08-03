@@ -67,7 +67,7 @@ export class RpcDispatcher {
               messages.push({
                 id: `assistant-${run.id}`,
                 role: "assistant",
-                content: `[Run ${run.id} completed]`,
+                content: run.response ?? "",
               });
             } else if (run.status === "error") {
               messages.push({
@@ -158,6 +158,7 @@ export class RpcDispatcher {
     ws: WebSocket,
   ): void {
     let buffered = "";
+    let responseText = "";
 
     const send = (event: string, payload: unknown) => {
       if (ws.readyState !== ws.OPEN) return;
@@ -194,6 +195,13 @@ export class RpcDispatcher {
           // Parse and map Codex JSON events
           const events = mapCodexEvent(trimmed, run.id);
           for (const e of events) {
+            if (e.event === "agent") {
+              const data = (e.payload as { stream?: string; data?: { text?: string } }).data;
+              const stream = (e.payload as { stream?: string }).stream;
+              if (stream === "assistant" && data?.text) {
+                responseText = data.text;
+              }
+            }
             send(e.event, e.payload);
           }
         }
@@ -208,6 +216,7 @@ export class RpcDispatcher {
         const ok = ev.code === 0;
         this.db.updateRun(run.id, {
           status: ok ? "completed" : "error",
+          response: responseText || undefined,
           error: ok ? undefined : `exit code ${ev.code}`,
         });
         // If the process exited without emitting turn.completed JSON,

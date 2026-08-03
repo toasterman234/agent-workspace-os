@@ -90,3 +90,14 @@
 - Verified: typecheck ✓, lint ✓, format ✓, build ✓
 - Committed `feat(ui): genericize useGateway`
 - **Next**: Phase I — persistent apps and artifacts for the ACP gateway
+
+## Session: 2026-08-02 (continued) — first live browser verification
+- Started the gateway and opened the built UI in a real browser (Interceptor) for the first time — Phases C-H had only ever been typecheck/lint/build/smoke-test verified, never visually.
+- Found "stuck on Connecting": `buildEngine()`'s `events` argument was dropped by `createAcpEngine()` and by the `"acp"` entry in `engines/index.ts`, so `onConnectionStateChange` never fired even though the WebSocket connected fine underneath. Fixed by threading `events` through both call sites; `AcpEngine` now calls `onConnectionStateChange` on open/close/error. Verified in-browser: sidebar shows "Connected — open settings" immediately.
+- Found sidebar stuck on "No agents yet" / composer unusable from Home: `AcpEngine` had no `fetchThreadList()`, so the UI never had a thread to target. Added a synthetic one-thread-per-agent list from `listAgents()`, and had `AcpEngine` fire `onKnownAgentIdsChanged`/`onModelDefaultsChanged` right after connecting. Verified: "Codex" now appears in the sidebar and the composer becomes usable.
+- Fixed `AcpEngine.sendMessage`/`abort` hardcoding `agentId: "codex"` regardless of which thread was active — now resolves the real agent id from the thread id.
+- Sent a live message end-to-end through the UI: gateway spawned `codex exec --json`, streamed events, "Hello" rendered in the chat pane. Confirms the full round trip (browser → WS → gateway → codex → WS → AG-UI mapper → UI) works live.
+- Attempted to fix conversation persistence (reload showed only the user message, not the assistant reply): added `AcpEngine.resolveSessionId()` to cache/reuse one gateway session per thread instead of creating a new one per message, and added a `runs.response` column + accumulation in `acp-gateway/rpc.ts`/`db.ts` so `chat.history` could replay real text instead of a `[Run ... completed]` placeholder.
+- **This last change is unverified and possibly broken**: a test run got stuck at `status: running` in `runs` with no `response` saved — the exit-handling path in `streamRun()` isn't reliably firing/persisting. Stopped debugging at user's request; needs its own pass.
+- Docs updated (this file, `task_plan.md`, `findings.md`) to reflect verified vs. unverified state before committing.
+- **Next**: debug the stuck-run/response-persistence path in `acp-gateway/src/rpc.ts` (`streamRun`'s exit handler), or roll it back if not worth the complexity yet. Then continue Phase I.

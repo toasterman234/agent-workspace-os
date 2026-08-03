@@ -85,17 +85,42 @@ export class AcpEngine implements Engine {
     (res: { ok: true; payload?: RpcPayload } | { ok: false; error?: string }) => void
   >();
   private _agents: AgentInfo[] = [];
+  /** Maps a UI thread id (== agentId for the synthetic "main" thread) to the
+   * gateway's real session id, so repeated sends/history reuse one session. */
+  private sessionByThread = new Map<string, string>();
   private eventHandlers = new Map<string, Set<(payload: RpcPayload) => void>>();
   private _connectPromise: Promise<void> | null = null;
   private _messageCounter = 0;
 
-  constructor(gatewayUrl: string) {
+  private onConnectionStateChange: (state: string) => void;
+  private onKnownAgentIdsChanged: (ids: Set<string>) => void;
+  private onModelDefaultsChanged: (defaults: {
+    workspaceDefault: string | null;
+    byAgent: Map<string, string>;
+    defaultAgentId: string | null;
+  }) => void;
+
+  constructor(
+    gatewayUrl: string,
+    onConnectionStateChange?: (state: string) => void,
+    onKnownAgentIdsChanged?: (ids: Set<string>) => void,
+    onModelDefaultsChanged?: (defaults: {
+      workspaceDefault: string | null;
+      byAgent: Map<string, string>;
+      defaultAgentId: string | null;
+    }) => void,
+  ) {
     this.id = "acp";
     this.gatewayUrl = gatewayUrl;
+    this.onConnectionStateChange = onConnectionStateChange ?? (() => {});
+    this.onKnownAgentIdsChanged = onKnownAgentIdsChanged ?? (() => {});
+    this.onModelDefaultsChanged = onModelDefaultsChanged ?? (() => {});
     log("AcpEngine created, gateway:", gatewayUrl);
 
     // Closure over `this` so store methods can call engine.rpc()
     const engine: AcpEngine["rpc"] = (...args) => this.rpc(...args);
+    const resolveSessionId: AcpEngine["resolveSessionId"] = (threadId) =>
+      this.resolveSessionId(threadId);
 
     this.conversations = {
       listSessions: async (agentId?: string): Promise<SessionInfo[]> => {
@@ -152,7 +177,9 @@ export class AcpEngine implements Engine {
         // not supported by ACP gateway yet — no-op
       },
 
-      loadHistory: async (sessionId: string): Promise<StoredMessage[]> => {
+      loadHistory: async (threadId: string): Promise<StoredMessage[]> => {
+        const sessionId = await resolveSessionId(threadId);
+        if (!sessionId) return [];
         const res = await engine("chat.history", { sessionId });
         if (!res.ok || !res.payload) return [];
         const msgs =
@@ -193,6 +220,8 @@ export class AcpEngine implements Engine {
   async connect(): Promise<void> {
     if (this._connectPromise) return this._connectPromise;
 
+    this.onConnectionStateChange("CONNECTING");
+
     this._connectPromise = new Promise((resolve, reject) => {
       const wsUrl = this.gatewayUrl.replace(/^http/, "ws") + "/ws";
       log("connecting to", wsUrl);
@@ -201,7 +230,16 @@ export class AcpEngine implements Engine {
       ws.onopen = () => {
         log("connected");
         this.ws = ws;
+        this.onConnectionStateChange("CONNECTED");
         resolve();
+        void this.listAgents().then((agents) => {
+          this.onKnownAgentIdsChanged(new Set(agents.map((a) => a.id)));
+          this.onModelDefaultsChanged({
+            workspaceDefault: null,
+            byAgent: new Map(),
+            defaultAgentId: agents[0]?.id ?? null,
+          });
+        });
       };
 
       ws.onmessage = (event: MessageEvent) => {
@@ -225,6 +263,7 @@ export class AcpEngine implements Engine {
 
       ws.onerror = (err) => {
         warn("WebSocket error", err);
+        this.onConnectionStateChange("UNREACHABLE");
         if (!this._connectPromise) return;
         reject(new Error("WebSocket connection failed"));
         this._connectPromise = null;
@@ -233,6 +272,7 @@ export class AcpEngine implements Engine {
       ws.onclose = () => {
         log("disconnected");
         this.ws = null;
+        this.onConnectionStateChange("DISCONNECTED");
       };
     });
 
@@ -261,6 +301,32 @@ export class AcpEngine implements Engine {
       this.pending.set(id, resolve);
       this.ws!.send(JSON.stringify({ type: "req", id, method, params }));
     });
+  }
+
+  /** Resolve a UI thread id to a real gateway session id, creating one on
+   * first use and caching it for subsequent sends/history loads. Returns ""
+   * if the thread id isn't a known agent (e.g. before `listAgents` runs). */
+  private async resolveSessionId(threadId: string): Promise<string> {
+    const cached = this.sessionByThread.get(threadId);
+    if (cached) return cached;
+
+    const isAgentId = this._agents.length === 0 || this._agents.some((a) => a.id === threadId);
+    if (!isAgentId) return "";
+
+    const existing = await this.rpc("sessions.list", { agentId: threadId });
+    const sessions =
+      (existing.ok && (existing.payload?.["sessions"] as RpcSessionResponse[] | undefined)) || [];
+    if (sessions.length > 0) {
+      const sessionId = sessions[0]!.id;
+      this.sessionByThread.set(threadId, sessionId);
+      return sessionId;
+    }
+
+    const created = await this.rpc("sessions.create", { agentId: threadId });
+    if (!created.ok || !created.payload) return "";
+    const sessionId = (created.payload["session"] as RpcSessionResponse).id;
+    this.sessionByThread.set(threadId, sessionId);
+    return sessionId;
   }
 
   private onEvent(event: string, handler: (payload: RpcPayload) => void): () => void {
@@ -300,10 +366,12 @@ export class AcpEngine implements Engine {
   }
 
   async sendMessage(
-    _sessionId: string,
+    threadId: string,
     messages: unknown[],
     abortController: AbortController,
   ): Promise<Response> {
+    const agentId = this._agents.some((a) => a.id === threadId) ? threadId : "codex";
+    const sessionId = await this.resolveSessionId(threadId);
     const lastMsg = messages[messages.length - 1] as
       | { role?: string; content?: unknown }
       | undefined;
@@ -397,7 +465,8 @@ export class AcpEngine implements Engine {
     });
 
     const res = await this.rpc("chat.send", {
-      agentId: "codex",
+      agentId,
+      sessionId: sessionId || undefined,
       message: text,
     });
 
@@ -415,13 +484,56 @@ export class AcpEngine implements Engine {
     });
   }
 
-  async abort(_sessionId: string): Promise<void> {
-    await this.rpc("chat.abort", { agentId: "codex" });
+  async abort(sessionId: string): Promise<void> {
+    const agentId = this._agents.some((a) => a.id === sessionId) ? sessionId : "codex";
+    await this.rpc("chat.abort", { agentId });
+  }
+
+  /** One synthetic "main" thread per registered agent, so the UI has a
+   * target thread before any session has been created. */
+  async fetchThreadList(): Promise<
+    Array<{
+      id: string;
+      title: string;
+      createdAt: number;
+      clawKind: "main" | "extra";
+      clawAgentId: string;
+    }>
+  > {
+    const agents = this._agents.length > 0 ? this._agents : await this.listAgents();
+    return agents.map((a) => ({
+      id: a.id,
+      title: a.name ?? a.id,
+      createdAt: Date.now(),
+      clawKind: "main" as const,
+      clawAgentId: a.id,
+    }));
   }
 }
 
 /** Factory for use with EngineRegistry. Takes gateway URL from config. */
-export function createAcpEngine(config: Record<string, unknown>): AcpEngine {
+export function createAcpEngine(
+  config: Record<string, unknown>,
+  events?: Record<string, unknown>,
+): AcpEngine {
   const url = (config["gatewayUrl"] as string) ?? "http://localhost:18791";
-  return new AcpEngine(url as string);
+  const onConnectionStateChange = events?.["onConnectionStateChange"] as
+    | ((state: string) => void)
+    | undefined;
+  const onKnownAgentIdsChanged = events?.["onKnownAgentIdsChanged"] as
+    | ((ids: Set<string>) => void)
+    | undefined;
+  const onModelDefaultsChanged = events?.["onModelDefaultsChanged"] as
+    | ((defaults: {
+        workspaceDefault: string | null;
+        byAgent: Map<string, string>;
+        defaultAgentId: string | null;
+      }) => void)
+    | undefined;
+  return new AcpEngine(
+    url as string,
+    onConnectionStateChange,
+    onKnownAgentIdsChanged,
+    onModelDefaultsChanged,
+  );
 }
