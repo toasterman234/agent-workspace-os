@@ -12,7 +12,7 @@ declare module "sql.js" {
   }
 
   class Database {
-    constructor(data?: ArrayBuffer);
+    constructor(data?: ArrayBuffer | Uint8Array);
     run(sql: string, params?: unknown[]): void;
     exec(sql: string, params?: unknown[]): QueryExecResult[];
     prepare(sql: string): Statement;

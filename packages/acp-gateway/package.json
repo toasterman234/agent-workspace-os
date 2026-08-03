@@ -11,8 +11,8 @@
     "typecheck": "tsc --noEmit",
     "lint:check": "echo 'no linter'",
     "format:check": "echo 'no formatter'",
-    "test": "echo 'no tests'",
-    "ci": "pnpm typecheck"
+    "test": "vitest run --passWithNoTests",
+    "ci": "pnpm typecheck && pnpm test"
   },
   "dependencies": {
     "sql.js": "^1.12.0",
@@ -23,6 +23,7 @@
     "@types/ws": "^8.18.1",
     "esbuild": "^0.25.0",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
   }
 }

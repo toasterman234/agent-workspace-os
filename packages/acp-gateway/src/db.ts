@@ -19,7 +19,14 @@ export class GatewayDB {
     // Load existing database or create fresh
     if (existsSync(dbPath)) {
       const buffer = readFileSync(dbPath);
-      inst.db = new inst.SQL.Database(new Uint8Array(buffer).buffer);
+      // sql.js expects a Uint8Array of the file bytes. Passing `.buffer`
+      // (the underlying ArrayBuffer) is wrong for a Node Buffer: the Buffer
+      // may be a view into a larger shared pool, so `.buffer` can contain
+      // unrelated bytes and corrupts the load (sessions/runs silently vanish
+      // on reopen). Construct a Uint8Array that exactly covers the file bytes.
+      const bytes = new Uint8Array(buffer.byteLength);
+      bytes.set(buffer);
+      inst.db = new inst.SQL.Database(bytes);
     } else {
       const dir = dirname(dbPath);
       if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
