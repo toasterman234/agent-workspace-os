@@ -7,8 +7,7 @@ import { IconButton } from "@/components/layout/sidebar/IconButton";
 import { Button } from "@/components/ui/Button";
 import { ConnectionState } from "@/lib/gateway/types";
 import { validateGatewayUrl } from "@/lib/gateway/url";
-import type { Settings } from "@/lib/storage";
-import type { EngineType } from "@/lib/storage";
+import type { EngineType, Settings } from "@/lib/storage";
 
 interface Props {
   open: boolean;
@@ -93,7 +92,9 @@ const STATUS_BANNER: Record<
 export function SettingsDialog({ open, currentSettings, connectionState, onClose, onSave }: Props) {
   const [gatewayUrl, setGatewayUrl] = useState(currentSettings?.gatewayUrl ?? "");
   const [token, setToken] = useState(currentSettings?.token ?? "");
-  const [engineType, setEngineType] = useState<EngineType>(currentSettings?.engineType ?? "openclaw");
+  const [engineType, setEngineType] = useState<EngineType>(
+    currentSettings?.engineType ?? "openclaw",
+  );
   // `pending` = user clicked Save & Connect and we're awaiting the engine's
   // resolution. We hold the dialog open and watch `connectionState` to decide
   // whether to close (CONNECTED) or surface an inline error (UNREACHABLE /
@@ -320,8 +321,8 @@ export function SettingsDialog({ open, currentSettings, connectionState, onClose
                   <option value="acp">ACP Gateway (coding agents)</option>
                 </select>
                 <p className="font-body text-sm text-text-neutral-tertiary">
-                  OpenClaw connects to an OpenClaw gateway. ACP connects to the
-                  standalone agent workspace gateway for CLI coding agents.
+                  OpenClaw connects to an OpenClaw gateway. ACP connects to the standalone agent
+                  workspace gateway for CLI coding agents.
                 </p>
               </div>
 

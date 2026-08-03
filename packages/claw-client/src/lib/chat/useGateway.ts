@@ -196,7 +196,9 @@ export function useGateway({ onAuthFailed }: { onAuthFailed: () => void }) {
 
   useEffect(() => {
     const s = getSettings();
-    const engineType: string = s?.engineType ?? "openclaw";
+    // Default engine type: if gatewayUrl points to the ACP port, use "acp"
+    const engineType: string =
+      s?.engineType ?? (s?.gatewayUrl && /:18791\b/.test(s.gatewayUrl) ? "acp" : "openclaw");
     const engine = buildEngine(
       {
         id: "default",

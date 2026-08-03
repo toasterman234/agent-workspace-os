@@ -65,6 +65,12 @@ function serveStatic(res: ServerResponse, url: string, staticDir: string): void 
   let pathname = url.split("?")[0] ?? "/";
   if (pathname === "/") pathname = "/index.html";
 
+  // Rewrite /plugins/openclawos/* → /* (build uses basePath for OpenClaw plugin)
+  const pluginPrefix = "/plugins/openclawos";
+  if (pathname.startsWith(pluginPrefix + "/")) {
+    pathname = pathname.slice(pluginPrefix.length);
+  }
+
   const filePath = join(staticDir, pathname);
   if (!filePath.startsWith(staticDir)) {
     res.writeHead(403);
