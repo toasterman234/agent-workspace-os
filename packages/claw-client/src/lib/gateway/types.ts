@@ -211,6 +211,20 @@ export interface ToolAgentEvent extends AgentEventBase {
   data: ToolStreamData;
 }
 
+export interface PlanEntryData {
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+}
+
+export interface PlanStreamData {
+  entries: PlanEntryData[];
+}
+
+export interface PlanAgentEvent extends AgentEventBase {
+  stream: "plan";
+  data: PlanStreamData;
+}
+
 export interface LifecycleStreamData {
   phase: "error" | "started" | "completed";
   error?: string;
@@ -232,6 +246,7 @@ export type AgentEvent =
   | AssistantAgentEvent
   | ThinkingAgentEvent
   | ToolAgentEvent
+  | PlanAgentEvent
   | LifecycleAgentEvent
   | OtherAgentEvent;
 

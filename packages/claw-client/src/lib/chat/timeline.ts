@@ -22,6 +22,13 @@ export type AssistantTimelineSegment =
       isError?: boolean;
       durationMs?: number;
     }
+  // Full plan/todo-list snapshot from the agent (e.g. DCode's write_todos
+  // tool). Each update replaces the whole list, not incremental — the
+  // consumer keeps only the latest one per run.
+  | {
+      type: "plan";
+      entries: Array<{ content: string; status: "pending" | "in_progress" | "completed" }>;
+    }
   // Authoritative token usage for the run, emitted by the gateway on
   // chat:final. Encoded into the message stream so it survives history
   // re-renders without a side-channel store. Read by AssistantMessage to
@@ -84,6 +91,20 @@ function isTimelineSegment(value: unknown): value is AssistantTimelineSegment {
       typeof candidate.output === "string" &&
       (candidate.isError === undefined || typeof candidate.isError === "boolean") &&
       (candidate.durationMs === undefined || typeof candidate.durationMs === "number")
+    );
+  }
+
+  if (candidate.type === "plan") {
+    const planCandidate = candidate as { entries?: unknown };
+    return (
+      Array.isArray(planCandidate.entries) &&
+      planCandidate.entries.every(
+        (e) =>
+          e &&
+          typeof e === "object" &&
+          typeof (e as { content?: unknown }).content === "string" &&
+          typeof (e as { status?: unknown }).status === "string",
+      )
     );
   }
 

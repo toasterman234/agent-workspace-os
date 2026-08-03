@@ -120,6 +120,21 @@ export function createOpenClawAGUIMapper(onEvent: (event: Record<string, unknown
 
   return {
     onAgentEvent(evt: AgentEvent) {
+      if (evt.stream === "plan") {
+        const entries = Array.isArray(evt.data.entries) ? evt.data.entries : [];
+        debugLog("agent:plan", { runId: evt.runId, seq: evt.seq, entries });
+        ensureMessageStarted(evt.runId);
+        emitEvent({
+          type: EventType.TEXT_MESSAGE_CONTENT,
+          messageId,
+          delta: encodeAssistantTimelineSegment({
+            type: "plan",
+            entries,
+          }),
+        });
+        return;
+      }
+
       if (evt.stream === "thinking") {
         const delta =
           typeof evt.data.delta === "string"

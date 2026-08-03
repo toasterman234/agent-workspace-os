@@ -53,6 +53,11 @@ type ResolvedTimelineItem =
       kind: "tool";
       key: string;
       traceId: string;
+    }
+  | {
+      kind: "plan";
+      key: string;
+      entries: Array<{ content: string; status: "pending" | "in_progress" | "completed" }>;
     };
 
 function prettyPayload(value: string | null): string | null {
@@ -311,6 +316,38 @@ function ToolCallDetail({
         {formatted}
       </pre>
     </div>
+  );
+}
+
+function PlanChecklist({
+  entries,
+}: {
+  entries: Array<{ content: string; status: "pending" | "in_progress" | "completed" }>;
+}) {
+  return (
+    <ul className="space-y-2xs">
+      {entries.map((entry, i) => (
+        <li
+          key={i}
+          className="flex items-start gap-xs font-body text-sm leading-body text-text-neutral-secondary"
+        >
+          <span aria-hidden="true" className="mt-[2px] flex h-4 w-4 shrink-0 items-center justify-center">
+            {entry.status === "completed" ? (
+              <Check size={12} strokeWidth={2.5} className="text-status-online" />
+            ) : entry.status === "in_progress" ? (
+              <Loader2 size={12} className="animate-spin text-text-accent-primary" />
+            ) : (
+              <span className="h-[7px] w-[7px] rounded-full border border-border-default/60" />
+            )}
+          </span>
+          <span
+            className={entry.status === "completed" ? "text-text-neutral-tertiary line-through" : ""}
+          >
+            {entry.content}
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -647,6 +684,24 @@ export function AssistantMessage({ message }: Props) {
         return;
       }
 
+      if (segment.type === "plan") {
+        // Each plan segment is a full snapshot, not a delta — replace the
+        // existing plan row in place (keeping its position stable) rather
+        // than appending a new one every time the todo list changes.
+        const existingIdx = items.findIndex((i) => i.kind === "plan");
+        const planItem: ResolvedTimelineItem = {
+          kind: "plan",
+          key: "plan",
+          entries: segment.entries,
+        };
+        if (existingIdx === -1) {
+          items.push(planItem);
+        } else {
+          items[existingIdx] = planItem;
+        }
+        return;
+      }
+
       if (segment.type === "tool_call") {
         const trace = ensureTrace(segment.toolCallId);
         if (segment.toolName) trace.name = segment.toolName;
@@ -808,6 +863,21 @@ export function AssistantMessage({ message }: Props) {
                       {item.text}
                     </ReactMarkdown>
                   </div>
+                </TimelineRow>
+              );
+            }
+
+            if (item.kind === "plan") {
+              const completed = item.entries.filter((e) => e.status === "completed").length;
+              return (
+                <TimelineRow
+                  key={item.key}
+                  status="neutral"
+                  category="Plan"
+                  summary={`${completed}/${item.entries.length} complete`}
+                  defaultOpen
+                >
+                  <PlanChecklist entries={item.entries} />
                 </TimelineRow>
               );
             }
