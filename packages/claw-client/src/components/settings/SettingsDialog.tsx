@@ -177,7 +177,7 @@ export function SettingsDialog({ open, currentSettings, connectionState, onClose
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmedUrl = gatewayUrl.trim();
-    const validation = validateGatewayUrl(trimmedUrl);
+    const validation = validateGatewayUrl(trimmedUrl, engineType);
     if (!validation.ok) {
       setError(validation.error);
       return;

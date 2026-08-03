@@ -7,7 +7,7 @@ export type GatewayUrlValidation = { ok: true } | { ok: false; error: string };
  * to connect — both bad UX. Defense-in-depth: the socket layer also catches
  * a sync throw and surfaces UNREACHABLE.
  */
-export function validateGatewayUrl(raw: string): GatewayUrlValidation {
+export function validateGatewayUrl(raw: string, engineType?: string): GatewayUrlValidation {
   if (!raw) return { ok: false, error: "Gateway URL is required." };
   let parsed: URL;
   try {
@@ -18,11 +18,15 @@ export function validateGatewayUrl(raw: string): GatewayUrlValidation {
       error: "Not a valid URL. Use ws://host:port or wss://host:port.",
     };
   }
-  if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") {
-    return {
-      ok: false,
-      error: `Unsupported protocol "${parsed.protocol}". Use ws:// for local or wss:// for remote.`,
-    };
+  // ACP gateways use HTTP for the static UI and /ws for WebSocket — accept http:// too
+  const validProtocols =
+    engineType === "acp" ? ["ws:", "wss:", "http:", "https:"] : ["ws:", "wss:"];
+  if (!validProtocols.includes(parsed.protocol)) {
+    const hint =
+      engineType === "acp"
+        ? "Use http:// for ACP gateways (WS auto-detected on /ws)."
+        : "Use ws:// for local or wss:// for remote.";
+    return { ok: false, error: `Unsupported protocol "${parsed.protocol}". ${hint}` };
   }
   if (!parsed.hostname) {
     return { ok: false, error: "URL is missing a hostname." };
